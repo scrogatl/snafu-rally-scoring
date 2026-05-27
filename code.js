@@ -1,6 +1,6 @@
 // --- CONFIGURATION ---
 // REPLACE WITH YOUR ACTUAL SPREADSHEET ID
-const SPREADSHEET_ID = '1COjEQApvj1uXyCExI58jy8BWpUTb7juTZ8lBfVmXIOo'; // cite: 1
+const SPREADSHEET_ID = ''; // cite: 1
 
 // Gmail Label (Tag) Names
 const LABEL_UNPROCESSED = 'rally/unprocessed'; // cite: 2
