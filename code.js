@@ -1,7 +1,3 @@
-// --- CONFIGURATION ---
-// REPLACE WITH YOUR ACTUAL SPREADSHEET ID
-const SPREADSHEET_ID = ''; // cite: 1
-
 // Gmail Label (Tag) Names
 const LABEL_UNPROCESSED = 'rally/unprocessed'; // cite: 2
 const LABEL_FORMAT_ERROR = 'rally/format-error'; // cite: 2
@@ -41,7 +37,8 @@ function processEmails() { // cite: 9
   }
 
   // Open spreadsheet once per execution to prevent throttling
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID); // cite: 24
+  // const ss = SpreadsheetApp.openById(SPREADSHEET_IDs); // cite: 24
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // Validate formatting and add X in Submitted column
   let threads = GmailApp.search(`label:${LABEL_UNPROCESSED}`); // cite: 12
