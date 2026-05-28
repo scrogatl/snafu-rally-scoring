@@ -1,111 +1,127 @@
 // Gmail Label (Tag) Names
-const LABEL_UNPROCESSED = 'rally/unprocessed'; // cite: 2
-const LABEL_FORMAT_ERROR = 'rally/format-error'; // cite: 2
+const LABEL_UNPROCESSED = 'rally/unprocessed';
+const LABEL_FORMAT_ERROR = 'rally/format-error';
 const LABEL_EMAIL_ERROR = 'rally/email-error';
-const LABEL_PROCESSING_ERROR = 'rally/processing-error'; // cite: 2
-const LABEL_NEEDS_REVIEW = 'rally/needs-review'; // cite: 2
-const LABEL_APPROVED = 'rally/approved'; // cite: 3
-const LABEL_SCORED = 'rally/scored'; // cite: 3
+const LABEL_PROCESSING_ERROR = 'rally/processing-error';
+const LABEL_NEEDS_REVIEW = 'rally/needs-review';
+const LABEL_APPROVED = 'rally/approved';
+const LABEL_SCORED = 'rally/scored';
 
 // Define the structure for the Rider Sheets
-const BONUS_COLUMN_INDEX = 1; // Column A (1-based index) // cite: 3, 4
-const SUBMITTED_COLUMN_INDEX = 2; // cite: 4
-const SUBMITTED_TIME_COLUMN_INDEX = 3; // cite: 5
-const APPROVED_COLUMN_INDEX  = 4; // cite: 5
-const APPROVED_TIME_COLUMN_INDEX  = 5; // cite: 6
+const BONUS_COLUMN_INDEX = 1;         // Column A (1-based index)
+const SUBMITTED_COLUMN_INDEX = 2;
+const SUBMITTED_TIME_COLUMN_INDEX = 3;
+const APPROVED_COLUMN_INDEX  = 4;
+const APPROVED_TIME_COLUMN_INDEX  = 5;
 
 /**
  * Main function to be set up as a time-driven trigger.
  */
-function processEmails() { // cite: 9
-  Logger.log('Starting email processing script...'); // cite: 9
-  
+function processEmails() {
+  Logger.log('Starting email processing script...');
+
   // 1. Fetch and bundle all Gmail Labels into a single object
-  const labels = {
-    unprocessed:     GmailApp.getUserLabelByName(LABEL_UNPROCESSED), // cite: 9
-    formatError:     GmailApp.getUserLabelByName(LABEL_FORMAT_ERROR), // cite: 10
-    emailError:      GmailApp.getUserLabelByName(LABEL_EMAIL_ERROR),
-    processingError: GmailApp.getUserLabelByName(LABEL_PROCESSING_ERROR), // cite: 10
-    needsReview:     GmailApp.getUserLabelByName(LABEL_NEEDS_REVIEW), // cite: 10
-    approved:        GmailApp.getUserLabelByName(LABEL_APPROVED), // cite: 11
-    scored:          GmailApp.getUserLabelByName(LABEL_SCORED) // cite: 11
+  const labelNames = {
+    unprocessed:     LABEL_UNPROCESSED,
+    formatError:     LABEL_FORMAT_ERROR,
+    emailError:      LABEL_EMAIL_ERROR,
+    processingError: LABEL_PROCESSING_ERROR,
+    needsReview:     LABEL_NEEDS_REVIEW,
+    approved:        LABEL_APPROVED,
+    scored:          LABEL_SCORED
   };
 
-  if (!labels.unprocessed) { // cite: 12
-    Logger.log(`Label not found: ${LABEL_UNPROCESSED}. Script stopped.`); // cite: 12
-    return; // cite: 12
+  const labels = {};
+  const missingLabels = [];
+
+  for (const [key, name] of Object.entries(labelNames)) {
+    const label = GmailApp.getUserLabelByName(name);
+    if (!label) {
+      missingLabels.push(name);
+    } else {
+      labels[key] = label;
+    }
+  }
+
+  if (missingLabels.length > 0) {
+    Logger.log(`ERROR: The following required Gmail labels are missing: ${missingLabels.join(', ')}. Script stopped.`);
+    return;
   }
 
   // Open spreadsheet once per execution to prevent throttling
-  // const ss = SpreadsheetApp.openById(SPREADSHEET_IDs); // cite: 24
+  // const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // Validate formatting and add X in Submitted column
-  let threads = GmailApp.search(`label:${LABEL_UNPROCESSED}`); // cite: 12
-  Logger.log(`Found ${threads.length} unprocessed emails(s).`); // cite: 13
+  let threads = GmailApp.search(`label:${LABEL_UNPROCESSED}`);
+  Logger.log(`Found ${threads.length} unprocessed email(s).`);
 
-  for (let thread of threads) { // cite: 13
-    const message = thread.getMessages()[0]; // cite: 13
+  for (let thread of threads) {
+    const message = thread.getMessages()[0];
     handleUnprocessedEmail(ss, message, labels);
   }
 
   // Look for Approved, update spreadsheet and remove Needs Review label
-  threads = GmailApp.search(`label:${LABEL_APPROVED} !label:${LABEL_SCORED}`); // cite: 14
-  Logger.log(`Found ${threads.length} Approved and unscored emails(s).`); // cite: 14
-  for (let thread of threads) { // cite: 15
-    const message = thread.getMessages()[0]; // cite: 15
+  threads = GmailApp.search(`label:${LABEL_APPROVED} !label:${LABEL_SCORED}`);
+  Logger.log(`Found ${threads.length} approved and unscored email(s).`);
+
+  for (let thread of threads) {
+    const message = thread.getMessages()[0];
     addApprovedCheck(ss, message, labels);
   }
-  
-  Logger.log('Email processing script finished.'); // cite: 16
+
+  Logger.log('Email processing script finished.');
 }
 
 /**
- * Adds X to the approved column and applies the scored label
+ * Adds X to the approved column and applies the scored label.
  */
 function addApprovedCheck(ss, message, labels) {
-  const thread = message.getThread(); // cite: 16
-  const subject = message.getSubject(); // cite: 17
-  const data = extractEmailData(message); // cite: 17
-  
-  Logger.log(`Processing email: ${subject}`); // cite: 17
-  
+  const thread = message.getThread();
+  const subject = message.getSubject();
+  const data = extractEmailData(message);
+
+  Logger.log(`Processing approved email: ${subject}`);
+
   try {
-    updateSpreadsheet(ss, data, APPROVED_COLUMN_INDEX, false); // cite: 18
-    thread.removeLabel(labels.needsReview); // cite: 18
-    thread.addLabel(labels.scored); // cite: 18
-    thread.refresh(); // cite: 18
+    updateSpreadsheet(ss, data, APPROVED_COLUMN_INDEX, false);
+    thread.removeLabel(labels.needsReview);
+    thread.addLabel(labels.scored);
+    thread.refresh();
   } catch (e) {
-    Logger.log(`-> Error approving ${subject}: ${e.message}`); // cite: 20
-    thread.addLabel(labels.processingError); // cite: 21
+    Logger.log(`-> Error approving ${subject}: ${e.message}`);
+    thread.addLabel(labels.processingError);
+    thread.refresh();
   }
 }
 
 /**
- * Handles the processing for a single email message.
+ * Handles the processing for a single unprocessed email message.
  */
 function handleUnprocessedEmail(ss, message, labels) {
-  const thread = message.getThread(); // cite: 16
-  const subject = message.getSubject(); // cite: 17
-  
-  Logger.log(`Processing email: ${subject}`); // cite: 17
+  const thread = message.getThread();
+  const subject = message.getSubject();
 
-  // 1. Format Check 
+  Logger.log(`Processing email: ${subject}`);
+
+  // 1. Format Check
   if (!isValidSubject(subject)) {
     Logger.log(`-> Format error: Subject does not match "Number Space String" pattern.`);
-    thread.addLabel(labels.formatError); // cite: 19
-    thread.removeLabel(labels.unprocessed); // cite: 19
-    return; // cite: 19
+    thread.addLabel(labels.formatError);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+    return;
   }
-  
-  const data = extractEmailData(message); // cite: 17
-  
-  // 2. Validate Email Address and Rider Number 
-  if (!validateEmailAddress(ss, data.sender, data['rider-number'])) { // cite: 19
+
+  const data = extractEmailData(message);
+
+  // 2. Validate Email Address and Rider Number
+  if (!validateEmailAddress(ss, data.sender, data['rider-number'])) {
     Logger.log(`-> Email validation failed for Rider ${data['rider-number']}. Tagging as email error.`);
     thread.addLabel(labels.emailError);
-    thread.removeLabel(labels.unprocessed); // cite: 19
-    return; // cite: 19
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+    return;
   }
 
   try {
@@ -115,12 +131,13 @@ function handleUnprocessedEmail(ss, message, labels) {
     Logger.log('-> Successfully processed. Tagging as "needs-review".');
     thread.addLabel(labels.needsReview);
     thread.removeLabel(labels.unprocessed);
-    thread.refresh(); // cite: 18
-    
+    thread.refresh();
+
   } catch (e) {
-    Logger.log(`-> Processing error for ${subject}: ${e.message}`); // cite: 20
-    thread.addLabel(labels.processingError); // cite: 21
-    thread.removeLabel(labels.unprocessed); // cite: 21
+    Logger.log(`-> Processing error for ${subject}: ${e.message}`);
+    thread.addLabel(labels.processingError);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
   }
 }
 
@@ -128,9 +145,9 @@ function handleUnprocessedEmail(ss, message, labels) {
  * Validates that the sender's email matches the registered email for the given rider number.
  */
 function validateEmailAddress(ss, senderString, riderNumber) {
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/; // cite: 74
-  
-  const senderMatch = senderString.match(emailRegex); // cite: 75
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+
+  const senderMatch = senderString.match(emailRegex);
   if (!senderMatch) {
     Logger.log(`Validation Error: No valid email address found in sender string: "${senderString}"`);
     return false;
@@ -144,11 +161,11 @@ function validateEmailAddress(ss, senderString, riderNumber) {
   }
 
   const data = masterSheet.getDataRange().getValues();
-  if (data.length < 2) return false; 
+  if (data.length < 2) return false;
 
   const headers = data[0];
-  const riderNumColIdx = headers.indexOf("Rider Number"); // cite: 63
-  const emailColIdx = headers.indexOf("Email"); // cite: 63
+  const riderNumColIdx = headers.indexOf("Rider Number");
+  const emailColIdx = headers.indexOf("Email");
 
   if (riderNumColIdx === -1 || emailColIdx === -1) {
     Logger.log("Validation Error: Missing 'Rider Number' or 'Email' column headers.");
@@ -157,26 +174,27 @@ function validateEmailAddress(ss, senderString, riderNumber) {
 
   for (let i = 1; i < data.length; i++) {
     const sheetRiderNum = String(data[i][riderNumColIdx]).trim();
-    
+
     if (sheetRiderNum === String(riderNumber).trim()) {
       const rawSheetEmail = String(data[i][emailColIdx]).trim();
-      const sheetEmailMatch = rawSheetEmail.match(emailRegex); // cite: 81
-      
+      const sheetEmailMatch = rawSheetEmail.match(emailRegex);
+
       if (!sheetEmailMatch) {
         Logger.log(`Validation Error: Row ${i + 1} contains an invalid email format: "${rawSheetEmail}"`);
         return false;
       }
-      
-      const registeredEmail = sheetEmailMatch[0].toLowerCase(); // cite: 81
-      if (registeredEmail === senderEmail) { // cite: 81
+
+      const registeredEmail = sheetEmailMatch[0].toLowerCase();
+      if (registeredEmail === senderEmail) {
         Logger.log(`-> Email validated for Rider ${riderNumber}.`);
-        return true; 
+        return true;
       } else {
-        Logger.log(`-> Email mismatch for Rider ${riderNumber}. Expected: ${registeredEmail}, Got: ${senderEmail}`); // cite: 81
+        Logger.log(`-> Email mismatch for Rider ${riderNumber}. Expected: ${registeredEmail}, Got: ${senderEmail}`);
         return false;
       }
     }
   }
+
   Logger.log(`-> Validation Error: Rider ${riderNumber} not found.`);
   return false;
 }
@@ -185,53 +203,59 @@ function validateEmailAddress(ss, senderString, riderNumber) {
  * Finds the row matching the bonus string in Column A and updates target status columns.
  */
 function updateSpreadsheet(ss, data, columnIndex, useEmailTime = true) {
-  const sheetName = data['rider-number']; // cite: 25
-  const bonusToFind = data['bonus']; // cite: 25
-  const sheet = ss.getSheetByName(sheetName); // cite: 25
-  
-  if (!sheet) throw new Error(`Sheet / Rider Number not found: ${sheetName}`); // cite: 27
+  const sheetName = data['rider-number'];
+  const bonusToFind = data['bonus'];
+  const sheet = ss.getSheetByName(sheetName);
 
-  const lastRow = sheet.getLastRow(); // cite: 28
+  if (!sheet) throw new Error(`Sheet / Rider Number not found: ${sheetName}`);
+
+  const lastRow = sheet.getLastRow();
   if (lastRow < 2) throw new Error(`Sheet ${sheetName} has no data rows.`);
 
-  const range = sheet.getRange(2, BONUS_COLUMN_INDEX, lastRow - 1, 1); // cite: 28, 52
-  const values = range.getValues(); // cite: 29
-  let rowToUpdate = -1; // cite: 29
-  
-  for (let i = 0; i < values.length; i++) { // cite: 29
-    const cellValue = String(values[i][0]).trim(); // cite: 29
-    if (cellValue === bonusToFind.trim()) { // cite: 30
-      rowToUpdate = i + 2; // cite: 30
-      break; // cite: 31
+  const range = sheet.getRange(2, BONUS_COLUMN_INDEX, lastRow - 1, 1);
+  const values = range.getValues();
+  let rowToUpdate = -1;
+
+  for (let i = 0; i < values.length; i++) {
+    const cellValue = String(values[i][0]).trim();
+    if (cellValue === bonusToFind.trim()) {
+      rowToUpdate = i + 2;
+      break;
     }
   }
 
-  if (rowToUpdate !== -1) { // cite: 32
+  if (rowToUpdate !== -1) {
     sheet.getRange(rowToUpdate, columnIndex).setValue("X");
-    
-    if (useEmailTime) { 
+
+    if (useEmailTime) {
       sheet.getRange(rowToUpdate, columnIndex + 1).setValue(data.date);
     } else {
-      sheet.getRange(rowToUpdate, columnIndex + 1).setValue(new Date()); 
+      sheet.getRange(rowToUpdate, columnIndex + 1).setValue(new Date());
     }
   } else {
-    throw new Error(`Row identifier (Bonus ID: ${bonusToFind}) not found in sheet ${sheetName}.`); // cite: 35
+    throw new Error(`Row identifier (Bonus ID: ${bonusToFind}) not found in sheet ${sheetName}.`);
   }
 }
 
-function isValidSubject(subject) { // cite: 36
-  return /^\d+\s.+$/.test(subject.trim()); // cite: 37
+/**
+ * Returns true if the subject matches the expected "Number Space String" format.
+ */
+function isValidSubject(subject) {
+  return /^\d+\s.+$/.test(subject.trim());
 }
 
-function extractEmailData(message) { // cite: 38
-  const subject = message.getSubject().trim(); // cite: 38
-  const match = subject.match(/^(\d+)\s(.*)$/); // cite: 38
+/**
+ * Extracts structured data from an email message using the subject line.
+ */
+function extractEmailData(message) {
+  const subject = message.getSubject().trim();
+  const match = subject.match(/^(\d+)\s(.*)$/);
 
   return {
-    date: message.getDate(), // cite: 40
-    subject: subject, // cite: 40
-    sender: message.getFrom(), // cite: 40
-    'rider-number': match ? match[1] : null, // cite: 38, 40
-    'bonus': match ? match[2] : null // cite: 38, 40
+    date: message.getDate(),
+    subject: subject,
+    sender: message.getFrom(),
+    'rider-number': match ? match[1] : null,
+    'bonus': match ? match[2] : null
   };
 }
