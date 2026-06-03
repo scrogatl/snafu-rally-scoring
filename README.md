@@ -1,157 +1,257 @@
 # snafu-rally-scoring
 
-A Google Apps Script that automates bonus scoring for rally events. Riders submit bonus claims by emailing a designated Gmail account, and this script processes those emails, validates them against a rider roster, and updates a Google Sheet scoreboard — all automatically via a time-driven trigger.
+Automated bonus scoring for rally events via Google Apps Script. Riders submit bonus claims by email — the script validates them, records them in your scoring spreadsheet, and manages everything through Gmail labels. Scorers approve or deny submissions from a Gmail sidebar add-on with one click.
 
 ---
 
-## How It Works
-
-Emails flow through a label-based state machine in Gmail:
+## How it works
 
 ```
-rally/unprocessed
-      │
-      ├─ invalid subject format ──────────► rally/format-error
-      │
-      ├─ unregistered sender email ───────► rally/email-error
-      │
-      ├─ spreadsheet/processing error ───► rally/processing-error
-      │
-      └─ valid ───────────────────────────► rally/needs-review
-                                                   │
-                                          (manual approval)
-                                                   │
-                                            rally/approved
-                                                   │
-                                          (script detects)
-                                                   │
-                                             rally/scored
+Rider sends email: "42 BP-07"
+        │
+        ▼
+  rally/unprocessed
+        │
+  Script validates format + sender email
+        │
+        ├─ bad format ──────────────► rally/format-error
+        ├─ unregistered sender ─────► rally/email-error
+        ├─ bonus ID not found ──────► rally/processing-error
+        │
+        ▼
+  rally/needs-review   ◄── scorer reviews in Gmail sidebar
+        │
+        ├─ Deny ────────────────────► rally/denied  (+ X written to sheet immediately)
+        │
+        ▼
+  rally/approved       ◄── scorer clicks Approve in sidebar
+        │
+  Script picks up on next run
+        │
+        ▼
+  rally/scored         ◄── X + timestamp written to rider's score sheet
 ```
 
-1. A rider sends an email with the subject `<RiderNumber> <BonusID>` (e.g. `42 BP-07`).
-2. The script finds it under `rally/unprocessed`, validates the format and sender, and marks their bonus sheet with an `X` plus a timestamp.
-3. A scorer reviews the submission and manually applies the `rally/approved` label.
-4. On the next trigger run, the script marks the approved column and timestamps it, then applies `rally/scored`.
+The `rally` parent label is also created so scorers can click it to see every submission at once regardless of status.
 
 ---
 
-## Spreadsheet Structure
+## Files
 
-The script expects a Google Sheet with the following layout:
+| File | Purpose |
+|------|---------|
+| `code.js` | Main script — `setup()`, `processEmails()`, spreadsheet logic, email validation |
+| `Sidebar.gs` | Gmail Add-on sidebar — Approve / Deny / Flag buttons |
+| `appsscript.json` | Apps Script manifest with OAuth scopes and add-on registration |
+| `setup.html` | Web-based setup wizard — generates all three files pre-configured for your event |
 
-### Rider Master Sheet
+---
 
-A sheet named exactly **`Rider Master`** with these column headers in row 1:
+## Spreadsheet structure
+
+The script reads all configuration at runtime from a **Config** sheet. `setup()` writes this sheet automatically — you don't create it manually.
+
+### Rider Master
+
+A tab named **`Rider Master`** (configurable). Row 1 is headers:
 
 | Rider Number | Name | Email |
 |---|---|---|
 | 42 | Jane Smith | jane@example.com |
+| 7 | Bob Jones | bob@example.com |
 
-### Rider Sheets
+The sender email on every submission is validated against this sheet.
 
-One sheet per rider, named by their **rider number** (e.g. `42`). Row 1 is a header; data starts at row 2.
+### Bonus Master
 
-| Column | Index | Contents |
-|--------|-------|----------|
-| A | 1 | Bonus ID |
-| B | 2 | Submitted (`X`) |
-| C | 3 | Submitted Time |
-| D | 4 | Approved (`X`) |
-| E | 5 | Approved Time |
+A tab named **`Bonus Master`** (configurable). Column A lists every bonus ID, one per row (row 1 = header):
+
+| Bonus ID |
+|----------|
+| BP-01    |
+| BP-02    |
+
+Used to auto-create rider score sheets on first submission.
+
+### Rider score sheets
+
+One tab per rider, named by their **rider number** (e.g. `42`). Created automatically from Bonus Master on first submission if the tab doesn't exist.
+
+Default column layout (all configurable):
+
+| A | B | C | D | E | F | G |
+|---|---|---|---|---|---|---|
+| Bonus ID | Submitted | Submit Time | Approved | Approve Time | Denied | Deny Time |
 
 ---
 
-## Gmail Label Setup
+## Gmail labels
 
-Create all of the following labels in Gmail before running the script. The script will stop and log an error if any are missing.
+All labels are created automatically by `setup()`. The label prefix is configurable (default: `rally`).
 
-| Label | Purpose |
+| Label | Meaning |
 |-------|---------|
-| `rally/unprocessed` | Applied to incoming bonus submission emails |
-| `rally/format-error` | Subject line didn't match `Number Space String` |
-| `rally/email-error` | Sender email didn't match the registered rider email |
-| `rally/processing-error` | Script hit an unexpected error during processing |
-| `rally/needs-review` | Valid submission awaiting scorer approval |
-| `rally/approved` | Scorer has approved the submission |
-| `rally/scored` | Script has recorded the approval in the spreadsheet |
-
-To create labels in Gmail: Settings → See all settings → Labels → Create new label.
-
-> **Tip:** Set up a Gmail filter to automatically apply `rally/unprocessed` to incoming emails sent to your scoring address.
+| `rally` | Parent label — click to see all submissions |
+| `rally/unprocessed` | Incoming submission, not yet processed |
+| `rally/needs-review` | Valid submission awaiting scorer decision |
+| `rally/approved` | Scorer approved — script will record on next run |
+| `rally/scored` | Fully recorded in the spreadsheet |
+| `rally/denied` | Scorer denied — X written to sheet immediately |
+| `rally/format-error` | Subject didn't match `<number> <bonusID>` |
+| `rally/email-error` | Sender not registered for that rider number |
+| `rally/processing-error` | Script error — check Executions log |
 
 ---
 
-## Deployment
+## Installation
 
-### Prerequisites
+### 1. Run the setup wizard
 
-- A Google account with Gmail and Google Sheets
-- The spreadsheet and Gmail labels set up as described above
+Open `setup.html` in any browser. Fill in:
 
-### Steps
+- Event name and organizer email
+- Your Google Sheets ID (from the spreadsheet URL)
+- Column layout for rider score sheets
+- Label prefix and sub-label names
+- How often the script should check for new emails
 
-1. Open your Google Sheet and go to **Extensions → Apps Script**.
-2. Delete any placeholder code and paste in the contents of `code.js`.
-3. Paste the contents of `appscript.json` into the **appsscript.json** manifest file (enable via Project Settings → Show "appsscript.json" manifest file).
-4. If using a specific spreadsheet (not the active one), uncomment the `SpreadsheetApp.openById(...)` line in `processEmails()` and replace with your spreadsheet ID. You can find the ID in the sheet's URL: `https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit`.
-5. Save the project.
+Click **Generate files** and download all three:
+- `code.js`
+- `Sidebar.gs`
+- `appsscript.json`
 
-### Set Up the Time-Driven Trigger
+### 2. Install in Apps Script
 
-1. In Apps Script, click **Triggers** (clock icon) → **Add Trigger**.
-2. Choose function: `processEmails`
-3. Event source: **Time-driven**
-4. Type: **Minutes timer** (every 5 or 10 minutes is recommended)
-5. Save and authorize the script when prompted.
+1. Open your Google Sheet → **Extensions → Apps Script**
+2. Paste `code.js` into `Code.gs`
+3. Click **+** next to Files → New script → name it `Sidebar` → paste `Sidebar.gs`
+4. Project Settings → check **Show "appsscript.json" manifest file in editor** → paste `appsscript.json`
+5. Save all files
 
-### Required OAuth Scopes
+### 3. Run setup()
 
-The script uses these scopes (already declared in `appscript.json`):
+In the Apps Script editor:
 
-- `https://www.googleapis.com/auth/spreadsheets.currentonly` — read/write the active spreadsheet
-- `https://www.googleapis.com/auth/gmail.modify` — read emails and manage labels
+1. Select function `setup` from the dropdown
+2. Click **Run ▶**
+3. Authorise when prompted
+
+`setup()` will:
+- Write the Config sheet with all your settings
+- Create the bare `rally` parent label
+- Create all sub-labels
+- Save the spreadsheet ID to Script Properties (used by the sidebar)
+- Set the time-driven trigger
+
+### 4. Activate the Gmail sidebar add-on
+
+1. In Apps Script → **Deploy → Test deployments**
+2. Click **Install**
+3. Open Gmail — the **Rally Scoring** panel will appear on the right when you open any submission email
+
+### 5. Set up the Gmail filter (recommended)
+
+So incoming submissions are labelled automatically:
+
+1. Gmail → Settings → **See all settings → Filters → Create a new filter**
+2. **To**: your scoring email address
+3. **Create filter** → Apply label → `rally/unprocessed`
+4. Save
 
 ---
 
-## Email Format
+## Submission format
 
-Riders must send emails with subjects in this exact format:
+Riders send email to your scoring address with the subject:
 
 ```
 <RiderNumber> <BonusID>
 ```
 
 Examples:
-- `42 BP-07`
-- `7 checkpoint-alpha`
-- `101 BONUS_99`
 
-The rider number must be numeric. Anything after the first space is treated as the Bonus ID and matched against Column A of that rider's sheet.
+```
+42 BP-07
+7 checkpoint-alpha
+101 BONUS_99
+```
 
-Emails that don't match this format are labeled `rally/format-error` and skipped.
+- Rider number must be numeric
+- Anything after the first space is the Bonus ID — matched against column A of the rider's sheet
+- Email must come from the rider's registered address in Rider Master
 
 ---
 
-## Logs
+## Config sheet reference
 
-The script logs all actions to Apps Script's built-in logger. To view logs:
+`setup()` writes these keys. All values are editable in the sheet after setup — no need to touch the code.
 
-**Executions** tab in the Apps Script editor → click any run to expand its log output.
+| Key | Default | Notes |
+|-----|---------|-------|
+| `event_name` | — | Display only |
+| `organizer_email` | — | Display only |
+| `spreadsheet_id` | — | Do not change after setup |
+| `sheet_rider_master` | `Rider Master` | Tab name of the rider roster |
+| `sheet_bonus_master` | `Bonus Master` | Tab with all bonus IDs in column A |
+| `master_col_rider_number` | `Rider Number` | Column header in Rider Master |
+| `master_col_email` | `Email` | Column header in Rider Master |
+| `header_row` | `1` | Header row number in rider sheets |
+| `col_bonus_id` | `1` | Column A |
+| `col_submitted` | `2` | Column B |
+| `col_submitted_time` | `3` | Column C |
+| `col_approved` | `4` | Column D |
+| `col_approved_time` | `5` | Column E |
+| `col_denied` | `6` | Column F |
+| `col_denied_time` | `7` | Column G |
+| `trigger_interval_min` | `10` | Re-run `setup()` to change |
+| `label_parent` | `rally` | Bare parent label |
+| `label_unprocessed` | `rally/unprocessed` | |
+| `label_format_error` | `rally/format-error` | |
+| `label_email_error` | `rally/email-error` | |
+| `label_processing_error` | `rally/processing-error` | |
+| `label_needs_review` | `rally/needs-review` | |
+| `label_approved` | `rally/approved` | |
+| `label_denied` | `rally/denied` | |
+| `label_scored` | `rally/scored` | |
 
-Useful for debugging missing labels, sheet mismatches, or email format issues.
+---
+
+## Changing settings after setup
+
+1. Run the setup wizard again with updated values
+2. Download and paste the new `code.js`
+3. Re-run `setup()` — it rewrites the Config sheet and resets the trigger
+
+Or edit the Config sheet directly for label name and column changes (no re-run needed — the script reads config live on every execution).
 
 ---
 
 ## Troubleshooting
 
-**Script stops immediately on first run**
-→ One or more Gmail labels are missing. Check the log for which ones and create them.
+| Symptom | Check |
+|---------|-------|
+| "Config sheet not found" | Run `setup()` first |
+| Script stops immediately | One or more Gmail labels are missing — re-run `setup()` |
+| Email tagged `format-error` | Subject must be `<number> <space> <bonusID>` — no prefix, no punctuation |
+| Email tagged `email-error` | Sender address doesn't match Rider Master — check for typos or alias issues |
+| Email tagged `processing-error` | Open Apps Script → Executions → click the failed run for the full error |
+| Bonus ID not found | Check Column A of the rider's sheet — spacing and capitalisation must match exactly |
+| Rider Master sheet not found | Tab must be named exactly as configured (default: `Rider Master`) |
+| Sidebar not appearing | Deploy → Test deployments → Install |
+| Trigger not running | Apps Script → Triggers — confirm `processEmails` exists; re-run `setup()` if not |
 
-**Email flagged as `email-error`**
-→ The sender's email doesn't match what's in the Rider Master sheet. Check for typos in the sheet or that the rider is emailing from their registered address.
+### Viewing logs
 
-**Bonus not found / `processing-error`**
-→ The Bonus ID in the subject doesn't match anything in Column A of the rider's sheet. Check for spacing or capitalization differences.
+Apps Script → **Executions** in the left sidebar → click any run to expand its log. The script logs every action, validation result, and error with a clear message.
 
-**`Rider Master` sheet not found**
-→ The sheet tab must be named exactly `Rider Master` (case-sensitive, with a space).
+---
+
+## OAuth scopes
+
+| Scope | Used for |
+|-------|---------|
+| `spreadsheets` | Read/write scoring spreadsheet |
+| `gmail.modify` | Read emails, manage labels |
+| `gmail.addons.*` | Gmail sidebar add-on |
+| `script.scriptapp` | Create time-driven trigger in `setup()` |
+| `script.external_request` | External requests from sidebar |
