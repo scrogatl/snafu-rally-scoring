@@ -1,7 +1,7 @@
 /**
  * Rally Scoring - code.js
  * Config is read at runtime from the "Config" sheet.
- * Run setup() once to create the Config sheet, Gmail labels, and time trigger.
+ * Run setup() once after importing config.csv as the Config sheet.
  */
 
 // --- Config loader ------------------------------------------------------------
@@ -20,29 +20,26 @@ function loadConfig(ss) {
 
 // --- One-time setup -----------------------------------------------------------
 // Before running setup():
-//   1. Import config.csv (from the setup wizard) into your spreadsheet as a sheet named "Config"
-//   2. Make sure your Rider Master and Bonus Master sheets are populated
-// Then run this function once to create Gmail labels, rider sheets, and the time trigger.
+//   1. Import config.csv into your spreadsheet as a sheet named "Config"
+//   2. Populate your Rider Master and Bonus Master sheets
+// Then run this function once.
 
 function setup() {
   Logger.log('Running setup...');
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Save spreadsheet ID to Script Properties for use by Sidebar.gs
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
   Logger.log('Spreadsheet ID saved: ' + ss.getId());
 
-  // Load config from the Config sheet (imported from config.csv)
   let config;
   try {
     config = loadConfig(ss);
   } catch (e) {
     Logger.log('FATAL: ' + e.message);
-    Logger.log('Make sure you have imported config.csv as a sheet named "Config" before running setup().');
+    Logger.log('Import config.csv as a sheet named "Config" before running setup().');
     return;
   }
 
-  // Create the bare parent label so all submissions are visible in one click
   const parentLabel = config['label_parent'] || 'rally';
   if (!GmailApp.getUserLabelByName(parentLabel)) {
     GmailApp.createLabel(parentLabel);
@@ -51,7 +48,6 @@ function setup() {
     Logger.log('Label already exists: ' + parentLabel);
   }
 
-  // Create all sub-labels
   const labelKeys = [
     'label_unprocessed', 'label_format_error', 'label_email_error',
     'label_processing_error', 'label_needs_review', 'label_approved',
@@ -70,10 +66,8 @@ function setup() {
   }
   Logger.log('Labels: created=' + created + ', skipped=' + skipped);
 
-  // Create rider score sheets for all riders in Rider Master
   createAllRiderSheets_(ss, config);
 
-  // Set time-driven trigger
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'processEmails')
     .forEach(t => ScriptApp.deleteTrigger(t));
@@ -83,30 +77,15 @@ function setup() {
   Logger.log('Setup complete. Trigger set for every ' + intervalMin + ' minutes.');
 }
 
-/**
- * Loops through Rider Master and creates a score sheet for any
- * rider that doesn't already have one.
- */
+// --- Rider sheet creation -----------------------------------------------------
 function createAllRiderSheets_(ss, config) {
   const masterSheet = ss.getSheetByName(config['sheet_rider_master'] || 'Rider Master');
-  if (!masterSheet) {
-    Logger.log('createAllRiderSheets_: Rider Master sheet not found - skipping.');
-    return;
-  }
-
+  if (!masterSheet) { Logger.log('createAllRiderSheets_: Rider Master not found - skipping.'); return; }
   const rows = masterSheet.getDataRange().getValues();
-  if (rows.length < 2) {
-    Logger.log('createAllRiderSheets_: No riders found in Rider Master.');
-    return;
-  }
-
+  if (rows.length < 2) { Logger.log('createAllRiderSheets_: No riders found.'); return; }
   const headers = rows[0];
   const rci = headers.indexOf(config['master_col_rider_number'] || 'Rider Number');
-  if (rci === -1) {
-    Logger.log('createAllRiderSheets_: Rider Number column not found in Rider Master.');
-    return;
-  }
-
+  if (rci === -1) { Logger.log('createAllRiderSheets_: Rider Number column not found.'); return; }
   let created = 0, skipped = 0;
   for (let i = 1; i < rows.length; i++) {
     const riderNumber = String(rows[i][rci]).trim();
@@ -114,17 +93,36 @@ function createAllRiderSheets_(ss, config) {
     if (ss.getSheetByName(riderNumber)) {
       Logger.log('Rider sheet already exists: ' + riderNumber); skipped++;
     } else {
-      try {
-        createRiderSheet_(ss, config, riderNumber);
-        created++;
-      } catch (e) {
-        Logger.log('Error creating sheet for Rider ' + riderNumber + ': ' + e.message);
-      }
+      try { createRiderSheet_(ss, config, riderNumber); created++; }
+      catch (e) { Logger.log('Error creating sheet for Rider ' + riderNumber + ': ' + e.message); }
     }
   }
   Logger.log('Rider sheets: created=' + created + ', skipped=' + skipped);
 }
 
+function createRiderSheet_(ss, config, riderNumber) {
+  Logger.log('Creating rider sheet for: ' + riderNumber);
+  const bonusMasterName = config['sheet_bonus_master'] || 'Bonus Master';
+  const bonusMaster = ss.getSheetByName(bonusMasterName);
+  if (!bonusMaster) throw new Error(
+    'Cannot create rider sheet - "' + bonusMasterName + '" not found. ' +
+    'Create a sheet with one bonus ID per row in column A.'
+  );
+  const sheet = ss.insertSheet(riderNumber);
+  const headerRow = parseInt(config['header_row'], 10);
+  sheet.getRange(headerRow, 1, 1, 7)
+    .setValues([['Bonus ID', 'Submitted', 'Submit Time', 'Approved', 'Approve Time', 'Denied', 'Deny Time']])
+    .setFontWeight('bold');
+  sheet.setFrozenRows(headerRow);
+  const lastRow = bonusMaster.getLastRow();
+  if (lastRow > 1) {
+    const ids = bonusMaster.getRange(2, 1, lastRow - 1, 1).getValues();
+    sheet.getRange(headerRow + 1, 1, ids.length, 1).setValues(ids);
+  }
+  sheet.autoResizeColumn(1);
+  Logger.log('Created rider sheet: ' + riderNumber);
+  return sheet;
+}
 
 // --- Main processing loop -----------------------------------------------------
 function processEmails() {
@@ -139,144 +137,139 @@ function processEmails() {
   const labels = loadLabels_(config);
   if (!labels) return;
 
-  // Process new unprocessed submissions
+  // Process unprocessed threads - scan ALL messages, pass if any is valid
   let threads = GmailApp.search('label:' + config['label_unprocessed']);
-  Logger.log('Unprocessed: ' + threads.length);
+  Logger.log('Unprocessed threads: ' + threads.length);
   for (const thread of threads)
-    handleUnprocessedEmail(ss, config, thread.getMessages()[0], labels);
+    handleUnprocessedThread(ss, config, thread, labels);
 
-  // Record approved submissions that haven't been scored yet
+  // Record approved threads that haven't been scored yet
   threads = GmailApp.search(
     'label:' + config['label_approved'] + ' -label:' + config['label_scored']
   );
-  Logger.log('Approved/unscored: ' + threads.length);
+  Logger.log('Approved/unscored threads: ' + threads.length);
   for (const thread of threads)
-    addApprovedCheck(ss, config, thread.getMessages()[0], labels);
+    addApprovedCheck(ss, config, thread, labels);
 
   Logger.log('Processing complete.');
 }
 
 // --- Email handlers -----------------------------------------------------------
-function handleUnprocessedEmail(ss, config, message, labels) {
-  const thread = message.getThread();
-  const subject = message.getSubject();
-  Logger.log('Processing: ' + subject);
 
-  if (!isValidSubject(subject)) {
-    Logger.log('-> Format error.');
-    thread.addLabel(labels.formatError);
-    thread.removeLabel(labels.unprocessed);
-    thread.refresh();
-    return;
+/**
+ * Scans all messages in a thread. Uses the first valid submission message
+ * (valid format + registered email) to write the submitted X to the sheet.
+ */
+function handleUnprocessedThread(ss, config, thread, labels) {
+  const messages = thread.getMessages();
+  Logger.log('Thread has ' + messages.length + ' message(s): ' + messages[0].getSubject());
+
+  let validMessage = null;
+  let formatError = false;
+  let emailError  = false;
+
+  for (const message of messages) {
+    const subject = message.getSubject();
+    if (!isValidSubject(subject)) { formatError = true; continue; }
+    const data = extractEmailData(message);
+    if (!validateEmailAddress(ss, config, message.getFrom(), data['rider-number'])) {
+      emailError = true; continue;
+    }
+    validMessage = message;
+    break; // first valid message is enough to mark submitted
   }
 
-  const data = extractEmailData(message);
-
-  if (!validateEmailAddress(ss, config, data.sender, data['rider-number'])) {
-    Logger.log('-> Email validation failed for Rider ' + data['rider-number']);
+  if (validMessage) {
+    const data = extractEmailData(validMessage);
+    try {
+      updateSpreadsheet(ss, config, data, parseInt(config['col_submitted'], 10), true);
+      thread.addLabel(labels.needsReview);
+      thread.removeLabel(labels.unprocessed);
+      thread.refresh();
+      Logger.log('-> Submitted: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+    } catch (e) {
+      Logger.log('-> Processing error: ' + e.message);
+      thread.addLabel(labels.processingError);
+      thread.removeLabel(labels.unprocessed);
+      thread.refresh();
+    }
+  } else if (emailError) {
+    Logger.log('-> Email error on all messages.');
     thread.addLabel(labels.emailError);
     thread.removeLabel(labels.unprocessed);
     thread.refresh();
-    return;
-  }
-
-  try {
-    updateSpreadsheet(ss, config, data, parseInt(config['col_submitted'], 10), true);
-    thread.addLabel(labels.needsReview);
-    thread.removeLabel(labels.unprocessed);
-    thread.refresh();
-    Logger.log('-> Tagged as needs-review.');
-  } catch (e) {
-    Logger.log('-> Processing error: ' + e.message);
-    thread.addLabel(labels.processingError);
+  } else if (formatError) {
+    Logger.log('-> Format error on all messages.');
+    thread.addLabel(labels.formatError);
     thread.removeLabel(labels.unprocessed);
     thread.refresh();
   }
 }
 
-function addApprovedCheck(ss, config, message, labels) {
-  const thread = message.getThread();
-  Logger.log('Recording approval: ' + message.getSubject());
-  try {
-    updateSpreadsheet(ss, config, extractEmailData(message), parseInt(config['col_approved'], 10), false);
-    thread.removeLabel(labels.needsReview);
-    thread.addLabel(labels.scored);
-    thread.refresh();
-  } catch (e) {
-    Logger.log('-> Error: ' + e.message);
-    thread.addLabel(labels.processingError);
-    thread.refresh();
+/**
+ * Records an approval. Uses the first valid message in the thread
+ * for rider/bonus data.
+ */
+function addApprovedCheck(ss, config, thread, labels) {
+  const messages = thread.getMessages();
+  Logger.log('Recording approval for thread: ' + messages[0].getSubject());
+
+  // Find the first valid message to get rider/bonus data
+  for (const message of messages) {
+    if (!isValidSubject(message.getSubject())) continue;
+    const data = extractEmailData(message);
+    if (!data['rider-number'] || !data['bonus']) continue;
+    try {
+      updateSpreadsheet(ss, config, data, parseInt(config['col_approved'], 10), false);
+      thread.removeLabel(labels.needsReview);
+      thread.addLabel(labels.scored);
+      thread.refresh();
+      Logger.log('-> Approved: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+    } catch (e) {
+      Logger.log('-> Error: ' + e.message);
+      thread.addLabel(labels.processingError);
+      thread.refresh();
+    }
+    return;
   }
+  Logger.log('-> No valid message found in approved thread.');
 }
 
 // --- Spreadsheet update -------------------------------------------------------
 
 /**
- * Finds the rider's sheet (creating it from Bonus Master if missing),
- * locates the bonus row, and writes X + timestamp to the given column.
+ * Finds the bonus row and writes X + timestamp to columnIndex.
+ * Pass null for value to clear the cell (revert).
  */
-function updateSpreadsheet(ss, config, data, columnIndex, useEmailTime) {
+function updateSpreadsheet(ss, config, data, columnIndex, useEmailTime, value) {
   const riderNumber = data['rider-number'];
   const bonusToFind = data['bonus'];
 
   let sheet = ss.getSheetByName(riderNumber);
-  if (!sheet) {
-    sheet = createRiderSheet_(ss, config, riderNumber);
-  }
+  if (!sheet) sheet = createRiderSheet_(ss, config, riderNumber);
 
-  const lastRow = sheet.getLastRow();
+  const lastRow  = sheet.getLastRow();
   const startRow = parseInt(config['header_row'], 10) + 1;
   if (lastRow < startRow) throw new Error('No data rows in sheet ' + riderNumber);
 
   const bonusCol = parseInt(config['col_bonus_id'], 10);
-  const values = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
+  const values   = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
 
   for (let i = 0; i < values.length; i++) {
     if (String(values[i][0]).trim() === bonusToFind.trim()) {
       const row = startRow + i;
-      sheet.getRange(row, columnIndex).setValue('X');
-      sheet.getRange(row, columnIndex + 1).setValue(useEmailTime ? data.date : new Date());
+      if (value === null) {
+        // Revert - clear both value and timestamp
+        sheet.getRange(row, columnIndex).clearContent();
+        sheet.getRange(row, columnIndex + 1).clearContent();
+      } else {
+        sheet.getRange(row, columnIndex).setValue('X');
+        sheet.getRange(row, columnIndex + 1).setValue(useEmailTime ? data.date : new Date());
+      }
       return;
     }
   }
   throw new Error('Bonus ID "' + bonusToFind + '" not found in sheet ' + riderNumber);
-}
-
-/**
- * Creates a new rider sheet by copying bonus IDs from the Bonus Master sheet.
- * Headers are written based on the configured column layout.
- */
-function createRiderSheet_(ss, config, riderNumber) {
-  Logger.log('Creating rider sheet for: ' + riderNumber);
-
-  const bonusMasterName = config['sheet_bonus_master'] || 'Bonus Master';
-  const bonusMaster = ss.getSheetByName(bonusMasterName);
-  if (!bonusMaster) {
-    throw new Error(
-      'Cannot create rider sheet - "' + bonusMasterName + '" sheet not found. ' +
-      'Create a sheet named "' + bonusMasterName + '" with one bonus ID per row in column A.'
-    );
-  }
-
-  const sheet = ss.insertSheet(riderNumber);
-
-  // Write header row
-  const headerRow = parseInt(config['header_row'], 10);
-  const headers = ['Bonus ID', 'Submitted', 'Submit Time', 'Approved', 'Approve Time', 'Denied', 'Deny Time'];
-  sheet.getRange(headerRow, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
-  sheet.setFrozenRows(headerRow);
-
-  // Copy bonus IDs from Bonus Master (skip header row)
-  const bonusMasterLastRow = bonusMaster.getLastRow();
-  if (bonusMasterLastRow > 1) {
-    const bonusIds = bonusMaster.getRange(2, 1, bonusMasterLastRow - 1, 1).getValues();
-    const startRow = headerRow + 1;
-    sheet.getRange(startRow, 1, bonusIds.length, 1).setValues(bonusIds);
-  }
-
-  sheet.autoResizeColumn(1);
-  Logger.log('Created rider sheet: ' + riderNumber);
-  return sheet;
 }
 
 // --- Validation ---------------------------------------------------------------
@@ -288,7 +281,6 @@ function validateEmailAddress(ss, config, senderString, riderNumber) {
 
   const masterSheet = ss.getSheetByName(config['sheet_rider_master'] || 'Rider Master');
   if (!masterSheet) { Logger.log('Rider Master sheet not found.'); return false; }
-
   const rows = masterSheet.getDataRange().getValues();
   if (rows.length < 2) return false;
 
@@ -345,9 +337,9 @@ function extractEmailData(message) {
   const subject = message.getSubject().trim();
   const match = subject.match(/^(\d+)\s(.*)$/);
   return {
-    date: message.getDate(),
-    subject,
-    sender: message.getFrom(),
+    date:          message.getDate(),
+    subject:       subject,
+    sender:        message.getFrom(),
     'rider-number': match ? match[1] : null,
     'bonus':        match ? match[2] : null,
   };

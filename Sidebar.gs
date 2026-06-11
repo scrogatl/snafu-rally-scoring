@@ -1,13 +1,17 @@
-// ===========================================================================
-// GMAIL ADD-ON - Rally Scoring Sidebar
-// Paste this as a script file named "Sidebar" alongside code.js in Apps Script.
-// ===========================================================================
+/**
+ * Rally Scoring - Sidebar.gs
+ * Gmail Add-on sidebar. Shows all messages in a thread individually,
+ * with Approve / Deny buttons per message and Revert controls for the thread.
+ * Reads config from the Config sheet via loadConfig() defined in code.js.
+ * Add this as a script file named "Sidebar" in Apps Script.
+ */
 
 // --- Add-on entry point -------------------------------------------------------
 function buildAddOn(e) {
-  const message = GmailApp.getMessageById(e.gmail.messageId);
-  const thread  = message.getThread();
-  const subject = message.getSubject();
+  const messageId = e.gmail.messageId;
+  const message   = GmailApp.getMessageById(messageId);
+  const thread    = message.getThread();
+  const messages  = thread.getMessages();
 
   let config, ss;
   try {
@@ -17,148 +21,192 @@ function buildAddOn(e) {
     return errorCard_('Config error', err.message + ' - make sure setup() has been run.');
   }
 
-  if (!isValidSubject(subject)) {
-    return infoCard_('Not a rally submission', subject,
-      'Subject does not match the required format: Rider Number followed by Bonus ID.');
+  // Check if at least one message in thread is a valid rally submission
+  const hasValidMessage = messages.some(m => isValidSubject(m.getSubject()));
+  if (!hasValidMessage) {
+    return infoCard_('Not a rally submission',
+      message.getSubject(),
+      'No message in this thread matches the required format: Rider Number followed by Bonus ID.');
   }
 
-  const data         = extractEmailData(message);
   const threadLabels = thread.getLabels().map(l => l.getName());
-  const status       = getStatus_(threadLabels, config);
+  const threadStatus = getStatus_(threadLabels, config);
+  const threadId     = thread.getId();
 
-  return buildScoringCard_(data, status, e.gmail.messageId, config, threadLabels);
+  return buildScoringCard_(messages, threadStatus, threadId, config, threadLabels, ss);
 }
 
-// --- Card builders ------------------------------------------------------------
-function buildScoringCard_(data, status, messageId, config, threadLabels) {
+// --- Card builder -------------------------------------------------------------
+function buildScoringCard_(messages, threadStatus, threadId, config, threadLabels, ss) {
   const card = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
       .setTitle('Rally Scoring')
-      .setSubtitle('Bonus submission'));
+      .setSubtitle('Thread: ' + messages.length + ' message(s)'));
 
-  // Submission details
-  const details = CardService.newCardSection().setHeader('Submission details');
-  details.addWidget(CardService.newKeyValue().setTopLabel('Rider number').setContent(data['rider-number'] || '-'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('Bonus ID').setContent(data['bonus'] || '-'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('Submitted').setContent(data.date ? data.date.toLocaleString() : '-'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(data.sender || '-'));
-  card.addSection(details);
-
-  // Status
-  const statusSec = CardService.newCardSection().setHeader('Status');
-  statusSec.addWidget(CardService.newKeyValue().setTopLabel('Current status').setContent(status));
+  // Thread status section
+  const statusSec = CardService.newCardSection().setHeader('Thread status');
+  statusSec.addWidget(
+    CardService.newKeyValue().setTopLabel('Status').setContent(threadStatus)
+  );
   card.addSection(statusSec);
 
-  // Actions
-  const actions  = CardService.newCardSection().setHeader('Actions');
+  // One section per message
   const isScored  = threadLabels.includes(config['label_scored']);
-  const isApproved = threadLabels.includes(config['label_approved']);
   const isDenied  = threadLabels.includes(config['label_denied']);
+  const isApproved = threadLabels.includes(config['label_approved']);
 
-  if (isScored) {
-    actions.addWidget(CardService.newTextParagraph()
-      .setText('This submission has already been scored. No further action needed.'));
-  } else if (isDenied) {
-    actions.addWidget(CardService.newTextParagraph()
-      .setText('This submission has been denied.'));
-  } else {
-    if (!isApproved) {
-      actions.addWidget(CardService.newTextButton()
-        .setText('Approve submission')
+  messages.forEach(function(message, idx) {
+    const subject = message.getSubject();
+    const valid   = isValidSubject(subject);
+    const data    = valid ? extractEmailData(message) : null;
+    const msgId   = message.getId();
+    const label   = 'Message ' + (idx + 1) + (idx === messages.length - 1 ? ' (latest)' : '');
+
+    const sec = CardService.newCardSection().setHeader(label);
+    sec.addWidget(CardService.newKeyValue().setTopLabel('Subject').setContent(subject));
+    sec.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(message.getFrom()));
+    sec.addWidget(CardService.newKeyValue().setTopLabel('Date').setContent(message.getDate().toLocaleString()));
+
+    if (!valid) {
+      sec.addWidget(CardService.newTextParagraph().setText('Invalid format - not a rally submission.'));
+    } else if (isScored) {
+      sec.addWidget(CardService.newTextParagraph().setText('Thread is scored. Use Revert below to undo.'));
+    } else if (isDenied) {
+      sec.addWidget(CardService.newTextParagraph().setText('Thread is denied. Use Revert below to undo.'));
+    } else {
+      // Approve button for this message
+      if (!isApproved) {
+        sec.addWidget(CardService.newTextButton()
+          .setText('Approve this message')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('handleApprove')
+            .setParameters({ msgId: msgId, threadId: threadId }))
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setBackgroundColor('#1A56AA'));
+      }
+      // Deny button for this message
+      sec.addWidget(CardService.newTextButton()
+        .setText('Deny this message')
         .setOnClickAction(CardService.newAction()
-          .setFunctionName('handleApprove')
-          .setParameters({messageId}))
-        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-        .setBackgroundColor('#1A56AA'));
+          .setFunctionName('handleDeny')
+          .setParameters({ msgId: msgId, threadId: threadId })));
     }
 
-    actions.addWidget(CardService.newTextButton()
-      .setText('Deny submission')
-      .setOnClickAction(CardService.newAction()
-        .setFunctionName('handleDeny')
-        .setParameters({messageId})));
+    card.addSection(sec);
+  });
 
-    actions.addWidget(CardService.newTextButton()
-      .setText('Flag for review')
-      .setOnClickAction(CardService.newAction()
-        .setFunctionName('handleFlag')
-        .setParameters({messageId})));
+  // Revert section - always shown if thread has been actioned
+  if (isApproved || isDenied || isScored) {
+    const revertSec = CardService.newCardSection().setHeader('Revert');
+
+    if (isApproved || isScored) {
+      const firstMsgId = messages[0].getId();
+    revertSec.addWidget(CardService.newTextButton()
+        .setText('Remove approval / revert to needs-review')
+        .setOnClickAction(CardService.newAction()
+          .setFunctionName('handleRevertApproved')
+          .setParameters({ firstMsgId: firstMsgId })));
+    }
+
+    if (isDenied) {
+      revertSec.addWidget(CardService.newTextButton()
+        .setText('Remove denial / revert to needs-review')
+        .setOnClickAction(CardService.newAction()
+          .setFunctionName('handleRevertDenied')
+          .setParameters({ firstMsgId: firstMsgId })));
+    }
+
+    card.addSection(revertSec);
   }
-  card.addSection(actions);
+
   return card.build();
-}
-
-function errorCard_(subtitle, msg) {
-  return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
-    .addSection(CardService.newCardSection()
-      .addWidget(CardService.newTextParagraph().setText(msg)))
-    .build();
-}
-
-function infoCard_(subtitle, subject, msg) {
-  return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
-    .addSection(CardService.newCardSection()
-      .addWidget(CardService.newKeyValue().setTopLabel('Subject').setContent(subject))
-      .addWidget(CardService.newTextParagraph().setText(msg)))
-    .build();
 }
 
 // --- Action handlers ----------------------------------------------------------
 
 function handleApprove(e) {
-  const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error - run setup() first.');
-  if (!labels) return notify_('Gmail labels missing - run setup() first.');
+  const msgId    = e.parameters.msgId;
+  const threadId = e.parameters.threadId;
+  const ctx      = loadThreadContext_(msgId);
+  if (!ctx.config) return notify_('Config error - run setup() first.');
+  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+
   try {
-    // Write approval to spreadsheet immediately, then apply approved + scored labels
-    updateSpreadsheet(ss, config, data, parseInt(config['col_approved'], 10), false);
-    thread.addLabel(labels.approved);
-    thread.addLabel(labels.scored);
-    thread.removeLabel(labels.needsReview);
-    thread.refresh();
-    return notifyRefresh_('Approved: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+    // Write approval to sheet using this specific message's data
+    updateSpreadsheet(ctx.ss, ctx.config, ctx.data, parseInt(ctx.config['col_approved'], 10), false);
+    ctx.thread.addLabel(ctx.labels.approved);
+    ctx.thread.addLabel(ctx.labels.scored);
+    ctx.thread.removeLabel(ctx.labels.needsReview);
+    ctx.thread.removeLabel(ctx.labels.denied);
+    ctx.thread.refresh();
+    return notifyRefresh_('Approved: Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus']);
   } catch (err) {
-    // Sheet write failed - still apply approved label so trigger can pick it up
-    try { thread.addLabel(labels.approved); thread.removeLabel(labels.needsReview); thread.refresh(); } catch(_) {}
+    try {
+      ctx.thread.addLabel(ctx.labels.approved);
+      ctx.thread.removeLabel(ctx.labels.needsReview);
+      ctx.thread.refresh();
+    } catch(_) {}
     return notifyRefresh_('Approved (sheet update failed: ' + err.message + ')');
   }
 }
 
 function handleDeny(e) {
-  const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error - run setup() first.');
-  if (!labels) return notify_('Gmail labels missing - run setup() first.');
-  try {
-    // Write X + timestamp to the denied column immediately
-    updateSpreadsheet(ss, config, data, parseInt(config['col_denied'], 10), false);
+  const msgId    = e.parameters.msgId;
+  const threadId = e.parameters.threadId;
+  const ctx      = loadThreadContext_(msgId);
+  if (!ctx.config) return notify_('Config error - run setup() first.');
+  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
 
-    thread.addLabel(labels.denied);
-    thread.removeLabel(labels.needsReview);
-    thread.removeLabel(labels.approved);
-    thread.refresh();
-    return notifyRefresh_('Denied: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+  try {
+    updateSpreadsheet(ctx.ss, ctx.config, ctx.data, parseInt(ctx.config['col_denied'], 10), false);
+    ctx.thread.addLabel(ctx.labels.denied);
+    ctx.thread.removeLabel(ctx.labels.needsReview);
+    ctx.thread.removeLabel(ctx.labels.approved);
+    ctx.thread.removeLabel(ctx.labels.scored);
+    ctx.thread.refresh();
+    return notifyRefresh_('Denied: Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus']);
   } catch (err) {
-    // Still apply the label even if the sheet write fails
     try {
-      thread.addLabel(labels.denied);
-      thread.removeLabel(labels.needsReview);
-      thread.refresh();
-    } catch (_) {}
+      ctx.thread.addLabel(ctx.labels.denied);
+      ctx.thread.removeLabel(ctx.labels.needsReview);
+      ctx.thread.refresh();
+    } catch(_) {}
     return notifyRefresh_('Denied (sheet update failed: ' + err.message + ')');
   }
 }
 
-function handleFlag(e) {
-  const {thread, config, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error - run setup() first.');
-  if (!labels) return notify_('Gmail labels missing - run setup() first.');
+function handleRevertApproved(e) {
+  const ctx = loadThreadContext_(e.parameters.firstMsgId);
+  if (!ctx.config) return notify_('Config error - run setup() first.');
+  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+
   try {
-    thread.addLabel(labels.needsReview);
-    thread.removeLabel(labels.approved);
-    thread.refresh();
-    return notifyRefresh_('Flagged for review: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+    // Clear approved column and timestamp in sheet
+    const data = getFirstValidData_(ctx.thread) || ctx.data;
+    if (data) updateSpreadsheet(ctx.ss, ctx.config, data, parseInt(ctx.config['col_approved'], 10), false, null);
+    ctx.thread.removeLabel(ctx.labels.approved);
+    ctx.thread.removeLabel(ctx.labels.scored);
+    ctx.thread.addLabel(ctx.labels.needsReview);
+    ctx.thread.refresh();
+    return notifyRefresh_('Reverted to needs-review.');
+  } catch (err) {
+    return notify_('Error: ' + err.message);
+  }
+}
+
+function handleRevertDenied(e) {
+  const ctx = loadThreadContext_(e.parameters.firstMsgId);
+  if (!ctx.config) return notify_('Config error - run setup() first.');
+  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+
+  try {
+    // Clear denied column and timestamp in sheet
+    const data = getFirstValidData_(ctx.thread) || ctx.data;
+    if (data) updateSpreadsheet(ctx.ss, ctx.config, data, parseInt(ctx.config['col_denied'], 10), false, null);
+    ctx.thread.removeLabel(ctx.labels.denied);
+    ctx.thread.addLabel(ctx.labels.needsReview);
+    ctx.thread.refresh();
+    return notifyRefresh_('Reverted to needs-review.');
   } catch (err) {
     return notify_('Error: ' + err.message);
   }
@@ -166,17 +214,39 @@ function handleFlag(e) {
 
 // --- Helpers ------------------------------------------------------------------
 
-function loadContext_(messageId) {
-  const message = GmailApp.getMessageById(messageId);
-  const thread  = message.getThread();
-  const data    = extractEmailData(message);
+/**
+ * Loads context from a message ID. Always pass a msgId -
+ * for revert handlers, pass the first message ID in the thread.
+ */
+function loadThreadContext_(msgId) {
+  let message, thread, data;
+  try {
+    message = GmailApp.getMessageById(msgId);
+    thread  = message.getThread();
+    data    = extractEmailData(message);
+  } catch(_) {}
+
   let config = null, ss = null, labels = null;
   try {
     ss     = SpreadsheetApp.openById(getSpreadsheetId_());
     config = loadConfig(ss);
     labels = loadLabels_(config);
-  } catch (_) {}
-  return {message, thread, config, ss, labels, data};
+  } catch(_) {}
+
+  return { message, thread, data, config, ss, labels };
+}
+
+/**
+ * Returns extractEmailData for the first message in the thread
+ * that has a valid rally subject line.
+ */
+function getFirstValidData_(thread) {
+  if (!thread) return null;
+  const messages = thread.getMessages();
+  for (const msg of messages) {
+    if (isValidSubject(msg.getSubject())) return extractEmailData(msg);
+  }
+  return null;
 }
 
 function getSpreadsheetId_() {
@@ -210,15 +280,32 @@ function loadLabels_(config) {
 
 function getStatus_(threadLabels, config) {
   const has = n => threadLabels.includes(n);
-  if (has(config['label_scored']))           return 'Scored';
-  if (has(config['label_approved']))         return 'Approved - pending score';
-  if (has(config['label_denied']))           return 'Denied';
-  if (has(config['label_needs_review']))     return 'Needs review';
-  if (has(config['label_processing_error'])) return 'Processing error';
-  if (has(config['label_email_error']))      return 'Email error';
-  if (has(config['label_format_error']))     return 'Format error';
-  if (has(config['label_unprocessed']))      return 'Unprocessed';
+  if (has(config['label_scored']))            return 'Scored';
+  if (has(config['label_approved']))          return 'Approved - pending score';
+  if (has(config['label_denied']))            return 'Denied';
+  if (has(config['label_needs_review']))      return 'Needs review';
+  if (has(config['label_processing_error']))  return 'Processing error';
+  if (has(config['label_email_error']))       return 'Email error';
+  if (has(config['label_format_error']))      return 'Format error';
+  if (has(config['label_unprocessed']))       return 'Unprocessed';
   return 'Unknown';
+}
+
+function errorCard_(subtitle, msg) {
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
+    .addSection(CardService.newCardSection()
+      .addWidget(CardService.newTextParagraph().setText(msg)))
+    .build();
+}
+
+function infoCard_(subtitle, subject, msg) {
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
+    .addSection(CardService.newCardSection()
+      .addWidget(CardService.newKeyValue().setTopLabel('Subject').setContent(subject))
+      .addWidget(CardService.newTextParagraph().setText(msg)))
+    .build();
 }
 
 function notify_(text) {

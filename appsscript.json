@@ -10,7 +10,8 @@
     "https://www.googleapis.com/auth/gmail.addons.current.message.action",
     "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
     "https://www.googleapis.com/auth/script.scriptapp",
-    "https://www.googleapis.com/auth/script.external_request"
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.locale"
   ],
   "runtimeVersion": "V8",
   "addOns": {
