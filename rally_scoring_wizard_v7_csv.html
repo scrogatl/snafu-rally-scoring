@@ -1,0 +1,317 @@
+
+<h2 class="sr-only">Rally Scoring Config Wizard - generates config.csv for import into Google Sheets</h2>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.wiz{max-width:680px;padding:1.5rem 0}
+.step{display:none}.step.active{display:block}
+.progress{display:flex;gap:6px;margin-bottom:2rem}
+.pip{height:3px;flex:1;border-radius:2px;background:var(--color-border-tertiary);transition:background .3s}
+.pip.done{background:var(--color-text-info)}
+.step-label{font-size:12px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.3rem}
+h2.vis{font-size:18px;font-weight:500;margin-bottom:.3rem}
+.sub{font-size:14px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:1.25rem}
+.field{margin-bottom:1.1rem}
+label{display:block;font-size:13px;font-weight:500;margin-bottom:.35rem;color:var(--color-text-secondary)}
+.hint{font-size:12px;color:var(--color-text-tertiary);margin-top:.3rem;line-height:1.5}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:1rem}
+.card-title{font-size:13px;font-weight:500;margin-bottom:.75rem}
+.actions{display:flex;justify-content:space-between;align-items:center;margin-top:1.75rem}
+.btn-back{background:transparent;border:0.5px solid var(--color-border-secondary);color:var(--color-text-secondary);padding:9px 20px;border-radius:var(--border-radius-md);font-size:14px;cursor:pointer;font-family:var(--font-sans);transition:background .15s}
+.btn-back:hover{background:var(--color-background-secondary)}
+.btn-next{background:var(--color-text-primary);color:var(--color-background-primary);border:none;padding:9px 24px;border-radius:var(--border-radius-md);font-size:14px;font-weight:500;cursor:pointer;font-family:var(--font-sans);transition:opacity .15s}
+.btn-next:hover{opacity:.82}
+.dl-btn{display:flex;align-items:center;gap:10px;width:100%;padding:14px 18px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);font-size:14px;cursor:pointer;font-family:var(--font-sans);margin-bottom:8px;transition:background .15s}
+.dl-btn:hover{background:var(--color-background-secondary)}
+.dl-btn .name{font-weight:500;flex:1;text-align:left}
+.dl-btn .badge{font-size:11px;padding:2px 8px;border-radius:var(--border-radius-md);background:var(--color-background-success);color:var(--color-text-success)}
+.sum-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.sum-row:last-child{border:none}
+.sum-k{color:var(--color-text-secondary)}
+.sum-v{font-weight:500;text-align:right;max-width:60%;word-break:break-all}
+.install-step{display:flex;gap:12px;margin-bottom:14px;font-size:13px;line-height:1.6;color:var(--color-text-secondary)}
+.install-num{min-width:24px;height:24px;border-radius:50%;background:var(--color-background-info);color:var(--color-text-info);font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;margin-top:1px;flex-shrink:0}
+.install-step strong{color:var(--color-text-primary)}
+code{font-family:var(--font-mono);font-size:12px;background:var(--color-background-secondary);padding:1px 5px;border-radius:4px}
+.lp{display:flex;flex-wrap:wrap;gap:6px;margin-top:.75rem}
+.lp-tag{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--color-background-secondary);color:var(--color-text-secondary);border:0.5px solid var(--color-border-tertiary)}
+.lp-parent{background:var(--color-background-info);color:var(--color-text-info);border-color:transparent}
+</style>
+
+<div class="wiz">
+  <div class="progress" id="progress">
+    <div class="pip done" id="p0"></div>
+    <div class="pip" id="p1"></div>
+    <div class="pip" id="p2"></div>
+    <div class="pip" id="p3"></div>
+    <div class="pip" id="p4"></div>
+  </div>
+
+  <!-- Step 0: Event details -->
+  <div class="step active" id="s0">
+    <div class="step-label">Step 1 of 5</div>
+    <h2 class="vis">Event details</h2>
+    <p class="sub">These values will be written into your Config sheet when you import the CSV.</p>
+    <div class="field"><label>Event name</label><input type="text" id="eventName" placeholder="e.g. SNAFU Rally 2025"/></div>
+    <div class="row2">
+      <div class="field"><label>Organizer email</label><input type="email" id="orgEmail" placeholder="scoring@example.com"/><div class="hint">Gmail account that receives submissions.</div></div>
+      <div class="field"><label>Check interval</label>
+        <select id="interval">
+          <option value="5">Every 5 minutes</option>
+          <option value="10" selected>Every 10 minutes</option>
+          <option value="15">Every 15 minutes</option>
+          <option value="30">Every 30 minutes</option>
+        </select>
+        <div class="hint">How often the script checks for new emails.</div>
+      </div>
+    </div>
+    <div class="field"><label>Google Sheets ID</label><input type="text" id="sheetId" placeholder="Paste the ID from your spreadsheet URL"/><div class="hint">From the URL: docs.google.com/spreadsheets/d/<strong style="color:var(--color-text-info)">THIS-PART</strong>/edit</div></div>
+  </div>
+
+  <!-- Step 1: Sheet structure -->
+  <div class="step" id="s1">
+    <div class="step-label">Step 2 of 5</div>
+    <h2 class="vis">Sheet structure</h2>
+    <p class="sub">Column layout for rider score sheets, and names for the master sheets.</p>
+    <div class="card">
+      <div class="card-title">Column layout - rider sheets</div>
+      <div class="hint" style="margin-bottom:.75rem">Column A is always Bonus ID.</div>
+      <div class="row3">
+        <div class="field"><label>Submitted</label><select id="colSubmit"><option value="2" selected>B</option><option value="3">C</option></select></div>
+        <div class="field"><label>Submit time</label><select id="colSubmitTime"><option value="2">B</option><option value="3" selected>C</option><option value="4">D</option></select></div>
+        <div class="field"><label>Approved</label><select id="colApprove"><option value="3">C</option><option value="4" selected>D</option><option value="5">E</option></select></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label>Approve time</label><select id="colApproveTime"><option value="4">D</option><option value="5" selected>E</option><option value="6">F</option></select></div>
+        <div class="field"><label>Denied</label><select id="colDenied"><option value="5">E</option><option value="6" selected>F</option><option value="7">G</option></select></div>
+        <div class="field"><label>Deny time</label><select id="colDeniedTime"><option value="6">F</option><option value="7" selected>G</option><option value="8">H</option></select></div>
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Rider Master sheet name</label><input type="text" id="masterSheet" value="Rider Master"/><div class="hint">Tab with rider numbers, names, and emails.</div></div>
+      <div class="field"><label>Bonus Master sheet name</label><input type="text" id="bonusMasterSheet" value="Bonus Master"/><div class="hint">Tab listing all bonus IDs in column A.</div></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Rider number column header</label><input type="text" id="riderNumHeader" value="Rider Number"/></div>
+      <div class="field"><label>Email column header</label><input type="text" id="emailHeader" value="Email"/></div>
+    </div>
+  </div>
+
+  <!-- Step 2: Labels -->
+  <div class="step" id="s2">
+    <div class="step-label">Step 3 of 5</div>
+    <h2 class="vis">Gmail labels</h2>
+    <p class="sub">Customize label names if needed. <code>setup()</code> reads these from the Config sheet and creates them automatically.</p>
+    <div class="card"><div class="card-title">Label prefix</div>
+      <div class="field"><label>Parent label name</label><input type="text" id="lParent" value="rally" oninput="updateLP()"/><div class="hint">A bare parent label is also created so you can click it to see all submissions at once.</div></div>
+    </div>
+    <div class="card"><div class="card-title">Sub-label names</div>
+      <div class="row2">
+        <div class="field"><label>Unprocessed</label><input type="text" id="lUnprocessed" value="unprocessed" oninput="updateLP()"/></div>
+        <div class="field"><label>Needs review</label><input type="text" id="lNeedsReview" value="needs-review" oninput="updateLP()"/></div>
+        <div class="field"><label>Approved</label><input type="text" id="lApproved" value="approved" oninput="updateLP()"/></div>
+        <div class="field"><label>Denied</label><input type="text" id="lDenied" value="denied" oninput="updateLP()"/></div>
+        <div class="field"><label>Scored</label><input type="text" id="lScored" value="scored" oninput="updateLP()"/></div>
+        <div class="field"><label>Format error</label><input type="text" id="lFormatError" value="format-error" oninput="updateLP()"/></div>
+        <div class="field"><label>Email error</label><input type="text" id="lEmailError" value="email-error" oninput="updateLP()"/></div>
+        <div class="field"><label>Processing error</label><input type="text" id="lProcError" value="processing-error" oninput="updateLP()"/></div>
+      </div>
+    </div>
+    <div style="font-size:13px;font-weight:500;margin-bottom:.5rem">Preview</div>
+    <div class="lp" id="labelPreview"></div>
+  </div>
+
+  <!-- Step 3: Review -->
+  <div class="step" id="s3">
+    <div class="step-label">Step 4 of 5</div>
+    <h2 class="vis">Review</h2>
+    <p class="sub">Check your settings then download your Config CSV.</p>
+    <div class="card" id="reviewCard"></div>
+  </div>
+
+  <!-- Step 4: Download -->
+  <div class="step" id="s4">
+    <div class="step-label">Step 5 of 5</div>
+    <h2 class="vis">Download your config</h2>
+    <p class="sub">Import this file into your Google Sheet as the Config tab, then run <code>setup()</code>.</p>
+
+    <button class="dl-btn" id="dlCSV">
+      <i class="ti ti-file-spreadsheet" aria-hidden="true" style="font-size:20px;color:var(--color-text-success)"></i>
+      <span class="name">config.csv</span>
+      <span class="badge">Download</span>
+    </button>
+
+    <div class="card" style="margin-top:1.25rem">
+      <div class="card-title">3 steps to finish setup</div>
+      <div class="install-step">
+        <div class="install-num">1</div>
+        <div><strong>Import config.csv into your spreadsheet</strong><br>
+        File &rarr; Import &rarr; Upload &rarr; select <code>config.csv</code><br>
+        Import location: <strong>Insert new sheet(s)</strong> &mdash; then rename the new tab to exactly <code>Config</code></div>
+      </div>
+      <div class="install-step">
+        <div class="install-num">2</div>
+        <div><strong>Paste the script files into Apps Script</strong><br>
+        Open your Sheet &rarr; Extensions &rarr; Apps Script<br>
+        Paste <code>code.js</code> into <code>Code.gs</code>, add a new file named <code>Sidebar</code> and paste <code>Sidebar.gs</code><br>
+        Enable the manifest, paste <code>appsscript.json</code>, and save all files</div>
+      </div>
+      <div class="install-step">
+        <div class="install-num">3</div>
+        <div><strong>Run <code>setup()</code></strong><br>
+        Select function <code>setup</code> &rarr; Run &rarr; authorise when prompted<br>
+        This reads your Config sheet, creates all Gmail labels, builds rider score sheets, and sets the trigger</div>
+      </div>
+    </div>
+    <div class="hint" style="font-size:13px;margin-top:.75rem">To reconfigure: edit values directly in the Config sheet, then re-run <code>setup()</code>. No need to use this wizard again.</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-back" id="btnBack" style="visibility:hidden">Back</button>
+    <button class="btn-next" id="btnNext">Continue</button>
+  </div>
+</div>
+
+<script>
+const STEPS = 5;
+let cur = 0;
+
+function v(id){ return (document.getElementById(id)?.value||'').trim(); }
+
+function cfg(){
+  const p = v('lParent')||'rally';
+  const sub = s => p+'/'+s;
+  return {
+    eventName:      v('eventName'),
+    orgEmail:       v('orgEmail'),
+    interval:       v('interval'),
+    sheetId:        v('sheetId'),
+    colSubmit:      v('colSubmit'),
+    colSubmitTime:  v('colSubmitTime'),
+    colApprove:     v('colApprove'),
+    colApproveTime: v('colApproveTime'),
+    colDenied:      v('colDenied'),
+    colDeniedTime:  v('colDeniedTime'),
+    masterSheet:    v('masterSheet'),
+    bonusMaster:    v('bonusMasterSheet'),
+    riderNumHeader: v('riderNumHeader'),
+    emailHeader:    v('emailHeader'),
+    lParent:        p,
+    lUnprocessed:   sub(v('lUnprocessed')  || 'unprocessed'),
+    lNeedsReview:   sub(v('lNeedsReview')  || 'needs-review'),
+    lApproved:      sub(v('lApproved')     || 'approved'),
+    lDenied:        sub(v('lDenied')       || 'denied'),
+    lScored:        sub(v('lScored')       || 'scored'),
+    lFormatError:   sub(v('lFormatError')  || 'format-error'),
+    lEmailError:    sub(v('lEmailError')   || 'email-error'),
+    lProcError:     sub(v('lProcError')    || 'processing-error'),
+  };
+}
+
+function cl(n){ return String.fromCharCode(64+parseInt(n)); }
+
+function updateLP(){
+  const c = cfg();
+  const ls = [c.lParent,c.lUnprocessed,c.lNeedsReview,c.lApproved,c.lDenied,c.lScored,c.lFormatError,c.lEmailError,c.lProcError];
+  document.getElementById('labelPreview').innerHTML = ls.map((l,i)=>
+    `<span class="lp-tag${i===0?' lp-parent':''}">${l}</span>`
+  ).join('');
+}
+
+function updateProgress(){
+  for(let i=0;i<STEPS;i++)
+    document.getElementById('p'+i).className='pip'+(i<=cur?' done':'');
+}
+
+function showStep(n){
+  document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s'+n).classList.add('active');
+  document.getElementById('btnBack').style.visibility = n===0?'hidden':'visible';
+  document.getElementById('btnNext').textContent = n===3?'Generate config': n===4?'Start over':'Continue';
+  if(n===2) updateLP();
+  if(n===3) buildReview();
+  updateProgress();
+}
+
+function buildReview(){
+  const c = cfg();
+  const rows = [
+    ['Event name',          c.eventName    || '(not set)'],
+    ['Organizer email',     c.orgEmail     || '(not set)'],
+    ['Spreadsheet ID',      c.sheetId ? c.sheetId.slice(0,26)+'...' : '(not set)'],
+    ['Check interval',      'Every '+c.interval+' min'],
+    ['Rider Master sheet',  c.masterSheet],
+    ['Bonus Master sheet',  c.bonusMaster],
+    ['Submitted / time',    cl(c.colSubmit)    +' / '+cl(c.colSubmitTime)],
+    ['Approved / time',     cl(c.colApprove)   +' / '+cl(c.colApproveTime)],
+    ['Denied / time',       cl(c.colDenied)    +' / '+cl(c.colDeniedTime)],
+    ['Parent label',        c.lParent],
+    ['Approved label',      c.lApproved],
+    ['Denied label',        c.lDenied],
+    ['Scored label',        c.lScored],
+  ];
+  document.getElementById('reviewCard').innerHTML = rows.map(([k,val])=>
+    `<div class="sum-row"><span class="sum-k">${k}</span><span class="sum-v">${val}</span></div>`
+  ).join('');
+}
+
+function genCSV(c){
+  // CSV rows: key, value, notes
+  const rows = [
+    ['key','value','notes'],
+    ['event_name',            c.eventName,       'Display only'],
+    ['organizer_email',       c.orgEmail,        'Display only'],
+    ['spreadsheet_id',        c.sheetId,         'Do not change after setup'],
+    ['sheet_rider_master',    c.masterSheet,     'Tab name of the rider roster'],
+    ['sheet_bonus_master',    c.bonusMaster,     'Tab listing all bonus IDs in column A'],
+    ['master_col_rider_number',c.riderNumHeader, 'Column header in Rider Master'],
+    ['master_col_email',      c.emailHeader,     'Column header in Rider Master'],
+    ['header_row',            '1',               'Row number of headers in rider sheets'],
+    ['col_bonus_id',          '1',               'Column index of Bonus ID (A=1)'],
+    ['col_submitted',         c.colSubmit,       'Column index for submitted X'],
+    ['col_submitted_time',    c.colSubmitTime,   'Column index for submitted timestamp'],
+    ['col_approved',          c.colApprove,      'Column index for approved X'],
+    ['col_approved_time',     c.colApproveTime,  'Column index for approved timestamp'],
+    ['col_denied',            c.colDenied,       'Column index for denied X'],
+    ['col_denied_time',       c.colDeniedTime,   'Column index for denied timestamp'],
+    ['trigger_interval_min',  c.interval,        'Re-run setup() to change'],
+    ['label_parent',          c.lParent,         'Bare parent label - click in Gmail to see all submissions'],
+    ['label_unprocessed',     c.lUnprocessed,    ''],
+    ['label_format_error',    c.lFormatError,    ''],
+    ['label_email_error',     c.lEmailError,     ''],
+    ['label_processing_error',c.lProcError,      ''],
+    ['label_needs_review',    c.lNeedsReview,    ''],
+    ['label_approved',        c.lApproved,       ''],
+    ['label_denied',          c.lDenied,         ''],
+    ['label_scored',          c.lScored,         ''],
+  ];
+  return rows.map(row =>
+    row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(',')
+  ).join('\r\n');
+}
+
+function download(filename, content, mime){
+  const blob = new Blob([content], {type: mime||'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  if(cur === 4){ cur = 0; showStep(0); return; }
+  if(cur === 3){
+    const c = cfg();
+    document.getElementById('dlCSV').onclick = () => download('config.csv', genCSV(c), 'text/csv');
+    cur = 4; showStep(4); return;
+  }
+  cur++; showStep(cur);
+});
+
+document.getElementById('btnBack').addEventListener('click', () => {
+  if(cur > 0){ cur--; showStep(cur); }
+});
+
+updateLP();
+</script>

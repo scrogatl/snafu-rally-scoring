@@ -1,9 +1,9 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// GMAIL ADD-ON — Rally Scoring Sidebar
+// ===========================================================================
+// GMAIL ADD-ON - Rally Scoring Sidebar
 // Paste this as a script file named "Sidebar" alongside code.js in Apps Script.
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
-// ─── Add-on entry point ───────────────────────────────────────────────────────
+// --- Add-on entry point -------------------------------------------------------
 function buildAddOn(e) {
   const message = GmailApp.getMessageById(e.gmail.messageId);
   const thread  = message.getThread();
@@ -14,7 +14,7 @@ function buildAddOn(e) {
     ss     = SpreadsheetApp.openById(getSpreadsheetId_());
     config = loadConfig(ss);
   } catch (err) {
-    return errorCard_('Config error', err.message + ' — make sure setup() has been run.');
+    return errorCard_('Config error', err.message + ' - make sure setup() has been run.');
   }
 
   if (!isValidSubject(subject)) {
@@ -29,7 +29,7 @@ function buildAddOn(e) {
   return buildScoringCard_(data, status, e.gmail.messageId, config, threadLabels);
 }
 
-// ─── Card builders ────────────────────────────────────────────────────────────
+// --- Card builders ------------------------------------------------------------
 function buildScoringCard_(data, status, messageId, config, threadLabels) {
   const card = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
@@ -38,10 +38,10 @@ function buildScoringCard_(data, status, messageId, config, threadLabels) {
 
   // Submission details
   const details = CardService.newCardSection().setHeader('Submission details');
-  details.addWidget(CardService.newKeyValue().setTopLabel('Rider number').setContent(data['rider-number'] || '—'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('Bonus ID').setContent(data['bonus'] || '—'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('Submitted').setContent(data.date ? data.date.toLocaleString() : '—'));
-  details.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(data.sender || '—'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('Rider number').setContent(data['rider-number'] || '-'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('Bonus ID').setContent(data['bonus'] || '-'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('Submitted').setContent(data.date ? data.date.toLocaleString() : '-'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(data.sender || '-'));
   card.addSection(details);
 
   // Status
@@ -105,12 +105,12 @@ function infoCard_(subtitle, subject, msg) {
     .build();
 }
 
-// ─── Action handlers ──────────────────────────────────────────────────────────
+// --- Action handlers ----------------------------------------------------------
 
 function handleApprove(e) {
   const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error — run setup() first.');
-  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  if (!config) return notify_('Config error - run setup() first.');
+  if (!labels) return notify_('Gmail labels missing - run setup() first.');
   try {
     // Write approval to spreadsheet immediately, then apply approved + scored labels
     updateSpreadsheet(ss, config, data, parseInt(config['col_approved'], 10), false);
@@ -118,9 +118,9 @@ function handleApprove(e) {
     thread.addLabel(labels.scored);
     thread.removeLabel(labels.needsReview);
     thread.refresh();
-    return notifyRefresh_('Approved: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+    return notifyRefresh_('Approved: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
   } catch (err) {
-    // Sheet write failed — still apply approved label so trigger can pick it up
+    // Sheet write failed - still apply approved label so trigger can pick it up
     try { thread.addLabel(labels.approved); thread.removeLabel(labels.needsReview); thread.refresh(); } catch(_) {}
     return notifyRefresh_('Approved (sheet update failed: ' + err.message + ')');
   }
@@ -128,8 +128,8 @@ function handleApprove(e) {
 
 function handleDeny(e) {
   const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error — run setup() first.');
-  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  if (!config) return notify_('Config error - run setup() first.');
+  if (!labels) return notify_('Gmail labels missing - run setup() first.');
   try {
     // Write X + timestamp to the denied column immediately
     updateSpreadsheet(ss, config, data, parseInt(config['col_denied'], 10), false);
@@ -138,7 +138,7 @@ function handleDeny(e) {
     thread.removeLabel(labels.needsReview);
     thread.removeLabel(labels.approved);
     thread.refresh();
-    return notifyRefresh_('Denied: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+    return notifyRefresh_('Denied: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
   } catch (err) {
     // Still apply the label even if the sheet write fails
     try {
@@ -152,19 +152,19 @@ function handleDeny(e) {
 
 function handleFlag(e) {
   const {thread, config, labels, data} = loadContext_(e.parameters.messageId);
-  if (!config) return notify_('Config error — run setup() first.');
-  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  if (!config) return notify_('Config error - run setup() first.');
+  if (!labels) return notify_('Gmail labels missing - run setup() first.');
   try {
     thread.addLabel(labels.needsReview);
     thread.removeLabel(labels.approved);
     thread.refresh();
-    return notifyRefresh_('Flagged for review: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+    return notifyRefresh_('Flagged for review: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
   } catch (err) {
     return notify_('Error: ' + err.message);
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// --- Helpers ------------------------------------------------------------------
 
 function loadContext_(messageId) {
   const message = GmailApp.getMessageById(messageId);
@@ -211,7 +211,7 @@ function loadLabels_(config) {
 function getStatus_(threadLabels, config) {
   const has = n => threadLabels.includes(n);
   if (has(config['label_scored']))           return 'Scored';
-  if (has(config['label_approved']))         return 'Approved — pending score';
+  if (has(config['label_approved']))         return 'Approved - pending score';
   if (has(config['label_denied']))           return 'Denied';
   if (has(config['label_needs_review']))     return 'Needs review';
   if (has(config['label_processing_error'])) return 'Processing error';
