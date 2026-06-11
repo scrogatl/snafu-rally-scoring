@@ -1,0 +1,837 @@
+
+<h2 class="sr-only">Rally Scoring Setup Wizard — generates code.js, Sidebar.gs, and appsscript.json pre-configured for your event</h2>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.wiz{max-width:680px;padding:1.5rem 0}
+.step{display:none}.step.active{display:block}
+.progress{display:flex;gap:6px;margin-bottom:2rem}
+.pip{height:3px;flex:1;border-radius:2px;background:var(--color-border-tertiary);transition:background .3s}
+.pip.done{background:var(--color-text-info)}
+.step-label{font-size:12px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.3rem}
+h2.vis{font-size:18px;font-weight:500;margin-bottom:.3rem}
+.sub{font-size:14px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:1.25rem}
+.field{margin-bottom:1.1rem}
+label{display:block;font-size:13px;font-weight:500;margin-bottom:.35rem;color:var(--color-text-secondary)}
+.hint{font-size:12px;color:var(--color-text-tertiary);margin-top:.3rem;line-height:1.5}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:1rem}
+.card-title{font-size:13px;font-weight:500;margin-bottom:.75rem}
+.actions{display:flex;justify-content:space-between;align-items:center;margin-top:1.75rem}
+.btn-back{background:transparent;border:0.5px solid var(--color-border-secondary);color:var(--color-text-secondary);padding:9px 20px;border-radius:var(--border-radius-md);font-size:14px;cursor:pointer;font-family:var(--font-sans);transition:background .15s}
+.btn-back:hover{background:var(--color-background-secondary)}
+.btn-next{background:var(--color-text-primary);color:var(--color-background-primary);border:none;padding:9px 24px;border-radius:var(--border-radius-md);font-size:14px;font-weight:500;cursor:pointer;font-family:var(--font-sans);transition:opacity .15s}
+.btn-next:hover{opacity:.82}
+.btn-next:disabled{opacity:.35;cursor:not-allowed}
+.dl-btn{display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);font-size:14px;cursor:pointer;font-family:var(--font-sans);margin-bottom:8px;transition:background .15s}
+.dl-btn:hover{background:var(--color-background-secondary)}
+.dl-btn .name{font-weight:500;flex:1;text-align:left}
+.dl-btn .badge{font-size:11px;padding:2px 8px;border-radius:var(--border-radius-md);background:var(--color-background-info);color:var(--color-text-info)}
+.sum-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.sum-row:last-child{border:none}
+.sum-k{color:var(--color-text-secondary)}
+.sum-v{font-weight:500;text-align:right;max-width:60%;word-break:break-all}
+.install-step{display:flex;gap:12px;margin-bottom:12px;font-size:13px;line-height:1.6}
+.install-num{min-width:22px;height:22px;border-radius:50%;background:var(--color-background-info);color:var(--color-text-info);font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;margin-top:1px;flex-shrink:0}
+code{font-family:var(--font-mono);font-size:12px;background:var(--color-background-secondary);padding:1px 5px;border-radius:4px}
+.label-preview{display:flex;flex-wrap:wrap;gap:6px;margin-top:.75rem}
+.lp-tag{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--color-background-secondary);color:var(--color-text-secondary);border:0.5px solid var(--color-border-tertiary)}
+.lp-parent{background:var(--color-background-info);color:var(--color-text-info);border-color:transparent}
+</style>
+
+<div class="wiz">
+  <div class="progress" id="progress">
+    <div class="pip done" id="p0"></div>
+    <div class="pip" id="p1"></div>
+    <div class="pip" id="p2"></div>
+    <div class="pip" id="p3"></div>
+    <div class="pip" id="p4"></div>
+  </div>
+
+  <div class="step active" id="s0">
+    <div class="step-label">Step 1 of 5</div>
+    <h2 class="vis">Event details</h2>
+    <p class="sub">Basic info written into the Config sheet by <code>setup()</code>.</p>
+    <div class="field">
+      <label>Event name</label>
+      <input type="text" id="eventName" placeholder="e.g. SNAFU Rally 2025"/>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Organizer email</label>
+        <input type="email" id="orgEmail" placeholder="scoring@example.com"/>
+        <div class="hint">Gmail account that receives submissions.</div>
+      </div>
+      <div class="field">
+        <label>Check interval</label>
+        <select id="interval">
+          <option value="5">Every 5 minutes</option>
+          <option value="10" selected>Every 10 minutes</option>
+          <option value="15">Every 15 minutes</option>
+          <option value="30">Every 30 minutes</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Google Sheets ID</label>
+      <input type="text" id="sheetId" placeholder="Paste the ID from your spreadsheet URL"/>
+      <div class="hint">From the URL: docs.google.com/spreadsheets/d/<strong style="color:var(--color-text-info)">THIS-PART</strong>/edit</div>
+    </div>
+  </div>
+
+  <div class="step" id="s1">
+    <div class="step-label">Step 2 of 5</div>
+    <h2 class="vis">Sheet structure</h2>
+    <p class="sub">Column layout for rider score sheets, and names for the master sheets.</p>
+    <div class="card">
+      <div class="card-title">Column layout — rider sheets</div>
+      <div class="hint" style="margin-bottom:.75rem">Column A is always Bonus ID.</div>
+      <div class="row3">
+        <div class="field"><label>Submitted</label>
+          <select id="colSubmit"><option value="2" selected>B</option><option value="3">C</option></select></div>
+        <div class="field"><label>Submit time</label>
+          <select id="colSubmitTime"><option value="2">B</option><option value="3" selected>C</option><option value="4">D</option></select></div>
+        <div class="field"><label>Approved</label>
+          <select id="colApprove"><option value="3">C</option><option value="4" selected>D</option><option value="5">E</option></select></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label>Approve time</label>
+          <select id="colApproveTime"><option value="4">D</option><option value="5" selected>E</option><option value="6">F</option></select></div>
+        <div class="field"><label>Denied</label>
+          <select id="colDenied"><option value="5">E</option><option value="6" selected>F</option><option value="7">G</option></select></div>
+        <div class="field"><label>Deny time</label>
+          <select id="colDeniedTime"><option value="6">F</option><option value="7" selected>G</option><option value="8">H</option></select></div>
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Rider Master sheet name</label>
+        <input type="text" id="masterSheet" value="Rider Master"/>
+        <div class="hint">Tab with rider numbers, names, and emails.</div>
+      </div>
+      <div class="field">
+        <label>Bonus Master sheet name</label>
+        <input type="text" id="bonusMasterSheet" value="Bonus Master"/>
+        <div class="hint">Tab listing all bonus IDs in column A. Used to create rider sheets at setup.</div>
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Rider number column header</label>
+        <input type="text" id="riderNumHeader" value="Rider Number"/></div>
+      <div class="field"><label>Email column header</label>
+        <input type="text" id="emailHeader" value="Email"/></div>
+    </div>
+  </div>
+
+  <div class="step" id="s2">
+    <div class="step-label">Step 3 of 5</div>
+    <h2 class="vis">Gmail labels</h2>
+    <p class="sub">The prefix groups all labels under a parent in Gmail. <code>setup()</code> creates everything automatically — including a bare parent label so you can click it to see all submissions at once.</p>
+    <div class="card">
+      <div class="card-title">Label prefix</div>
+      <div class="field">
+        <label>Parent label name</label>
+        <input type="text" id="lParent" value="rally" oninput="updateLabelPreview()"/>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Sub-label names</div>
+      <div class="row2">
+        <div class="field"><label>Unprocessed</label><input type="text" id="lUnprocessed" value="unprocessed" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Needs review</label><input type="text" id="lNeedsReview" value="needs-review" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Approved</label><input type="text" id="lApproved" value="approved" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Denied</label><input type="text" id="lDenied" value="denied" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Scored</label><input type="text" id="lScored" value="scored" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Format error</label><input type="text" id="lFormatError" value="format-error" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Email error</label><input type="text" id="lEmailError" value="email-error" oninput="updateLabelPreview()"/></div>
+        <div class="field"><label>Processing error</label><input type="text" id="lProcError" value="processing-error" oninput="updateLabelPreview()"/></div>
+      </div>
+    </div>
+    <div style="font-size:13px;font-weight:500;margin-bottom:.5rem">Preview</div>
+    <div class="label-preview" id="labelPreview"></div>
+  </div>
+
+  <div class="step" id="s3">
+    <div class="step-label">Step 4 of 5</div>
+    <h2 class="vis">Review</h2>
+    <p class="sub">Check your settings. All values are written to the Config sheet when you run <code>setup()</code> — nothing is hardcoded in the script.</p>
+    <div class="card" id="reviewCard"></div>
+  </div>
+
+  <div class="step" id="s4">
+    <div class="step-label">Step 5 of 5</div>
+    <h2 class="vis">Files ready</h2>
+    <p class="sub">Download all three files, then follow the install steps.</p>
+    <div style="margin-bottom:1.25rem">
+      <button class="dl-btn" id="dlCode">
+        <i class="ti ti-file-code" aria-hidden="true" style="font-size:18px;color:var(--color-text-info)"></i>
+        <span class="name">code.js</span><span class="badge">Main script + setup()</span>
+      </button>
+      <button class="dl-btn" id="dlSidebar">
+        <i class="ti ti-layout-sidebar-right" aria-hidden="true" style="font-size:18px;color:var(--color-text-info)"></i>
+        <span class="name">Sidebar.gs</span><span class="badge">Gmail add-on</span>
+      </button>
+      <button class="dl-btn" id="dlManifest">
+        <i class="ti ti-settings" aria-hidden="true" style="font-size:18px;color:var(--color-text-info)"></i>
+        <span class="name">appsscript.json</span><span class="badge">Manifest</span>
+      </button>
+    </div>
+    <div class="card">
+      <div class="card-title">Install in 4 steps</div>
+      <div class="install-step"><div class="install-num">1</div><div>Open your Google Sheet, then click <strong>Extensions</strong> then <strong>Apps Script</strong></div></div>
+      <div class="install-step"><div class="install-num">2</div><div>Paste <code>code.js</code> into <code>Code.gs</code>. Click <strong>+</strong> next to Files, add a new Script file named <code>Sidebar</code>, paste <code>Sidebar.gs</code> into it.</div></div>
+      <div class="install-step"><div class="install-num">3</div><div>Project Settings, check <em>Show appsscript.json</em>, paste <code>appsscript.json</code> into it. Save all files.</div></div>
+      <div class="install-step"><div class="install-num">4</div><div>Select function <code>setup</code> and click Run. Authorise when prompted. Creates Config sheet, Gmail labels, all rider score sheets, and sets the trigger.</div></div>
+    </div>
+    <div class="hint" style="font-size:13px;margin-top:.75rem">To activate the Gmail sidebar: <strong>Deploy</strong>, then <strong>Test deployments</strong>, then <strong>Install</strong>.</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-back" id="btnBack" style="visibility:hidden">Back</button>
+    <button class="btn-next" id="btnNext">Continue</button>
+  </div>
+</div>
+
+<script>
+const STEPS = 5;
+let cur = 0;
+
+function v(id){ return (document.getElementById(id)?.value||'').trim(); }
+
+function cfg(){
+  const p = v('lParent') || 'rally';
+  const sub = s => p + '/' + s;
+  return {
+    eventName:v('eventName'), orgEmail:v('orgEmail'),
+    interval:v('interval'), sheetId:v('sheetId'),
+    colSubmit:v('colSubmit'), colSubmitTime:v('colSubmitTime'),
+    colApprove:v('colApprove'), colApproveTime:v('colApproveTime'),
+    colDenied:v('colDenied'), colDeniedTime:v('colDeniedTime'),
+    masterSheet:v('masterSheet'), bonusMasterSheet:v('bonusMasterSheet'),
+    riderNumHeader:v('riderNumHeader'), emailHeader:v('emailHeader'),
+    lParent:p,
+    lUnprocessed: sub(v('lUnprocessed') || 'unprocessed'),
+    lNeedsReview: sub(v('lNeedsReview') || 'needs-review'),
+    lApproved:    sub(v('lApproved')    || 'approved'),
+    lDenied:      sub(v('lDenied')      || 'denied'),
+    lScored:      sub(v('lScored')      || 'scored'),
+    lFormatError: sub(v('lFormatError') || 'format-error'),
+    lEmailError:  sub(v('lEmailError')  || 'email-error'),
+    lProcError:   sub(v('lProcError')   || 'processing-error'),
+  };
+}
+
+function colLetter(n){ return String.fromCharCode(64+parseInt(n)); }
+
+function updateLabelPreview(){
+  const c = cfg();
+  const labels = [c.lParent, c.lUnprocessed, c.lNeedsReview, c.lApproved, c.lDenied, c.lScored, c.lFormatError, c.lEmailError, c.lProcError];
+  document.getElementById('labelPreview').innerHTML = labels.map((l,i) =>
+    `<span class="lp-tag${i===0?' lp-parent':''}">${l}</span>`
+  ).join('');
+}
+
+function updateProgress(){
+  for(let i=0;i<STEPS;i++)
+    document.getElementById('p'+i).className='pip'+(i<=cur?' done':'');
+}
+
+function showStep(n){
+  document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s'+n).classList.add('active');
+  document.getElementById('btnBack').style.visibility = n===0?'hidden':'visible';
+  const btn = document.getElementById('btnNext');
+  btn.textContent = n===3?'Generate files': n===4?'Start over':'Continue';
+  if(n===2) updateLabelPreview();
+  if(n===3) buildReview();
+  updateProgress();
+}
+
+function buildReview(){
+  const c = cfg();
+  const rows = [
+    ['Event name', c.eventName||'(not set)'],
+    ['Organizer email', c.orgEmail||'(not set)'],
+    ['Spreadsheet ID', c.sheetId ? c.sheetId.slice(0,24)+'...' : '(not set)'],
+    ['Check interval', 'Every '+c.interval+' min'],
+    ['Rider Master sheet', c.masterSheet],
+    ['Bonus Master sheet', c.bonusMasterSheet],
+    ['Submitted / time cols', colLetter(c.colSubmit)+' / '+colLetter(c.colSubmitTime)],
+    ['Approved / time cols', colLetter(c.colApprove)+' / '+colLetter(c.colApproveTime)],
+    ['Denied / time cols', colLetter(c.colDenied)+' / '+colLetter(c.colDeniedTime)],
+    ['Parent label', c.lParent],
+    ['Unprocessed label', c.lUnprocessed],
+    ['Needs review label', c.lNeedsReview],
+    ['Approved label', c.lApproved],
+    ['Denied label', c.lDenied],
+    ['Scored label', c.lScored],
+  ];
+  document.getElementById('reviewCard').innerHTML =
+    rows.map(([k,val])=>`<div class="sum-row"><span class="sum-k">${k}</span><span class="sum-v">${val}</span></div>`).join('');
+}
+
+function genCode(c){
+return `/**
+ * Rally Scoring — code.js
+ * Config is read at runtime from the "Config" sheet.
+ * Run setup() once to initialise everything.
+ */
+
+function loadConfig(ss) {
+  const sheet = ss.getSheetByName('Config');
+  if (!sheet) throw new Error('Config sheet not found. Run setup() first.');
+  const rows = sheet.getDataRange().getValues();
+  const config = {};
+  for (let i = 1; i < rows.length; i++) {
+    const key = String(rows[i][0]).trim();
+    const val = String(rows[i][1]).trim();
+    if (key) config[key] = val;
+  }
+  return config;
+}
+
+function setup() {
+  Logger.log('Running setup...');
+  const ss = SpreadsheetApp.openById('${c.sheetId}');
+  createConfigSheet_(ss);
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
+  Logger.log('Spreadsheet ID saved: ' + ss.getId());
+
+  const config = loadConfig(ss);
+
+  if (!GmailApp.getUserLabelByName('${c.lParent}')) {
+    GmailApp.createLabel('${c.lParent}');
+    Logger.log('Created label: ${c.lParent}');
+  } else {
+    Logger.log('Label already exists: ${c.lParent}');
+  }
+
+  const labelKeys = [
+    'label_unprocessed','label_format_error','label_email_error',
+    'label_processing_error','label_needs_review','label_approved',
+    'label_denied','label_scored'
+  ];
+  let created = 0, skipped = 0;
+  for (const key of labelKeys) {
+    const name = config[key];
+    if (!name) { Logger.log('Config key missing: ' + key); continue; }
+    if (GmailApp.getUserLabelByName(name)) {
+      Logger.log('Label already exists: ' + name); skipped++;
+    } else {
+      GmailApp.createLabel(name);
+      Logger.log('Created label: ' + name); created++;
+    }
+  }
+  Logger.log('Labels: created=' + created + ', skipped=' + skipped);
+
+  // Create rider score sheets for all riders in Rider Master
+  createAllRiderSheets_(ss, config);
+
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'processEmails')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('processEmails').timeBased().everyMinutes(${c.interval}).create();
+  Logger.log('Setup complete. Trigger set for every ${c.interval} minutes.');
+}
+
+function createAllRiderSheets_(ss, config) {
+  const masterSheet = ss.getSheetByName(config['sheet_rider_master'] || 'Rider Master');
+  if (!masterSheet) {
+    Logger.log('createAllRiderSheets_: Rider Master sheet not found — skipping.');
+    return;
+  }
+  const rows = masterSheet.getDataRange().getValues();
+  if (rows.length < 2) { Logger.log('createAllRiderSheets_: No riders found.'); return; }
+
+  const headers = rows[0];
+  const rci = headers.indexOf(config['master_col_rider_number'] || 'Rider Number');
+  if (rci === -1) { Logger.log('createAllRiderSheets_: Rider Number column not found.'); return; }
+
+  let created = 0, skipped = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const riderNumber = String(rows[i][rci]).trim();
+    if (!riderNumber) continue;
+    if (ss.getSheetByName(riderNumber)) {
+      Logger.log('Rider sheet already exists: ' + riderNumber); skipped++;
+    } else {
+      try { createRiderSheet_(ss, config, riderNumber); created++; }
+      catch (e) { Logger.log('Error creating sheet for Rider ' + riderNumber + ': ' + e.message); }
+    }
+  }
+  Logger.log('Rider sheets: created=' + created + ', skipped=' + skipped);
+}
+
+function createConfigSheet_(ss) {
+  let sheet = ss.getSheetByName('Config');
+  if (!sheet) { sheet = ss.insertSheet('Config'); }
+  const rows = [
+    ['key',                     'value',                      'notes'],
+    ['event_name',              '${c.eventName}',             'Display only'],
+    ['organizer_email',         '${c.orgEmail}',              'Display only'],
+    ['spreadsheet_id',          '${c.sheetId}',               'Do not change after setup'],
+    ['sheet_rider_master',      '${c.masterSheet}',           'Tab name of the rider roster'],
+    ['sheet_bonus_master',      '${c.bonusMasterSheet}',      'Tab listing all bonus IDs in column A'],
+    ['master_col_rider_number', '${c.riderNumHeader}',        'Column header in Rider Master'],
+    ['master_col_email',        '${c.emailHeader}',           'Column header in Rider Master'],
+    ['header_row',              '1',                          'Row number of headers in rider sheets'],
+    ['col_bonus_id',            '1',                          'Column index of Bonus ID (A=1)'],
+    ['col_submitted',           '${c.colSubmit}',             'Column index for submitted X'],
+    ['col_submitted_time',      '${c.colSubmitTime}',         'Column index for submitted timestamp'],
+    ['col_approved',            '${c.colApprove}',            'Column index for approved X'],
+    ['col_approved_time',       '${c.colApproveTime}',        'Column index for approved timestamp'],
+    ['col_denied',              '${c.colDenied}',             'Column index for denied X'],
+    ['col_denied_time',         '${c.colDeniedTime}',         'Column index for denied timestamp'],
+    ['trigger_interval_min',    '${c.interval}',              'Re-run setup() to change'],
+    ['label_parent',            '${c.lParent}',               'Bare parent label'],
+    ['label_unprocessed',       '${c.lUnprocessed}',          ''],
+    ['label_format_error',      '${c.lFormatError}',          ''],
+    ['label_email_error',       '${c.lEmailError}',           ''],
+    ['label_processing_error',  '${c.lProcError}',            ''],
+    ['label_needs_review',      '${c.lNeedsReview}',          ''],
+    ['label_approved',          '${c.lApproved}',             ''],
+    ['label_denied',            '${c.lDenied}',               ''],
+    ['label_scored',            '${c.lScored}',               ''],
+  ];
+  sheet.clearContents();
+  sheet.getRange(1, 1, rows.length, 3).setValues(rows);
+  sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, 3);
+  Logger.log('Config sheet written.');
+}
+
+function processEmails() {
+  Logger.log('Starting email processing...');
+  const ss = SpreadsheetApp.openById(
+    PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '${c.sheetId}'
+  );
+  let config;
+  try { config = loadConfig(ss); }
+  catch (e) { Logger.log('FATAL: ' + e.message); return; }
+
+  const labels = loadLabels_(config);
+  if (!labels) return;
+
+  let threads = GmailApp.search('label:${c.lUnprocessed}'.replace(/\\//g,'-'));
+  Logger.log('Unprocessed: ' + threads.length);
+  for (const thread of threads)
+    handleUnprocessedEmail(ss, config, thread.getMessages()[0], labels);
+
+  threads = GmailApp.search('label:${c.lApproved} -label:${c.lScored}'.replace(/\\//g,'-'));
+  Logger.log('Approved/unscored: ' + threads.length);
+  for (const thread of threads)
+    addApprovedCheck(ss, config, thread.getMessages()[0], labels);
+
+  Logger.log('Processing complete.');
+}
+
+function handleUnprocessedEmail(ss, config, message, labels) {
+  const thread = message.getThread();
+  const subject = message.getSubject();
+  Logger.log('Processing: ' + subject);
+
+  if (!isValidSubject(subject)) {
+    Logger.log('-> Format error.');
+    thread.addLabel(labels.formatError);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+    return;
+  }
+
+  const data = extractEmailData(message);
+  if (!validateEmailAddress(ss, config, data.sender, data['rider-number'])) {
+    Logger.log('-> Email validation failed for Rider ' + data['rider-number']);
+    thread.addLabel(labels.emailError);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+    return;
+  }
+
+  try {
+    updateSpreadsheet(ss, config, data, parseInt(config['col_submitted'], 10), true);
+    thread.addLabel(labels.needsReview);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+    Logger.log('-> Tagged as needs-review.');
+  } catch (e) {
+    Logger.log('-> Processing error: ' + e.message);
+    thread.addLabel(labels.processingError);
+    thread.removeLabel(labels.unprocessed);
+    thread.refresh();
+  }
+}
+
+function addApprovedCheck(ss, config, message, labels) {
+  const thread = message.getThread();
+  Logger.log('Recording approval: ' + message.getSubject());
+  try {
+    updateSpreadsheet(ss, config, extractEmailData(message), parseInt(config['col_approved'], 10), false);
+    thread.removeLabel(labels.needsReview);
+    thread.addLabel(labels.scored);
+    thread.refresh();
+  } catch (e) {
+    Logger.log('-> Error: ' + e.message);
+    thread.addLabel(labels.processingError);
+    thread.refresh();
+  }
+}
+
+function updateSpreadsheet(ss, config, data, columnIndex, useEmailTime) {
+  const riderNumber = data['rider-number'];
+  let sheet = ss.getSheetByName(riderNumber);
+  if (!sheet) sheet = createRiderSheet_(ss, config, riderNumber);
+
+  const startRow = parseInt(config['header_row'], 10) + 1;
+  const lastRow  = sheet.getLastRow();
+  if (lastRow < startRow) throw new Error('No data rows in sheet ' + riderNumber);
+
+  const bonusCol = parseInt(config['col_bonus_id'], 10);
+  const values = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim() === data['bonus'].trim()) {
+      const row = startRow + i;
+      sheet.getRange(row, columnIndex).setValue('X');
+      sheet.getRange(row, columnIndex + 1).setValue(useEmailTime ? data.date : new Date());
+      return;
+    }
+  }
+  throw new Error('Bonus ID "' + data['bonus'] + '" not found in sheet ' + riderNumber);
+}
+
+function createRiderSheet_(ss, config, riderNumber) {
+  Logger.log('Creating rider sheet for: ' + riderNumber);
+  const bonusMasterName = config['sheet_bonus_master'] || 'Bonus Master';
+  const bonusMaster = ss.getSheetByName(bonusMasterName);
+  if (!bonusMaster) throw new Error(
+    'Cannot create rider sheet — "' + bonusMasterName + '" not found. ' +
+    'Create a sheet named "' + bonusMasterName + '" with one bonus ID per row in column A.'
+  );
+  const sheet = ss.insertSheet(riderNumber);
+  const headerRow = parseInt(config['header_row'], 10);
+  sheet.getRange(headerRow, 1, 1, 7)
+    .setValues([['Bonus ID','Submitted','Submit Time','Approved','Approve Time','Denied','Deny Time']])
+    .setFontWeight('bold');
+  sheet.setFrozenRows(headerRow);
+  const lastRow = bonusMaster.getLastRow();
+  if (lastRow > 1) {
+    const ids = bonusMaster.getRange(2, 1, lastRow - 1, 1).getValues();
+    sheet.getRange(headerRow + 1, 1, ids.length, 1).setValues(ids);
+  }
+  sheet.autoResizeColumn(1);
+  Logger.log('Created rider sheet: ' + riderNumber);
+  return sheet;
+}
+
+function validateEmailAddress(ss, config, senderString, riderNumber) {
+  const re = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/;
+  const sm = senderString.match(re);
+  if (!sm) { Logger.log('No valid email in: ' + senderString); return false; }
+  const senderEmail = sm[0].toLowerCase();
+
+  const masterSheet = ss.getSheetByName(config['sheet_rider_master'] || 'Rider Master');
+  if (!masterSheet) { Logger.log('Rider Master sheet not found.'); return false; }
+  const rows = masterSheet.getDataRange().getValues();
+  if (rows.length < 2) return false;
+
+  const headers = rows[0];
+  const rci = headers.indexOf(config['master_col_rider_number'] || 'Rider Number');
+  const eci = headers.indexOf(config['master_col_email'] || 'Email');
+  if (rci === -1 || eci === -1) { Logger.log('Missing column headers in Rider Master.'); return false; }
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][rci]).trim() !== String(riderNumber).trim()) continue;
+    const em = String(rows[i][eci]).trim().match(re);
+    if (!em) { Logger.log('Invalid email in row ' + (i+1)); return false; }
+    const reg = em[0].toLowerCase();
+    if (reg === senderEmail) { Logger.log('Email validated for Rider ' + riderNumber); return true; }
+    Logger.log('Mismatch for Rider ' + riderNumber + ': expected ' + reg + ', got ' + senderEmail);
+    return false;
+  }
+  Logger.log('Rider ' + riderNumber + ' not found.');
+  return false;
+}
+
+function loadLabels_(config) {
+  const defs = {
+    unprocessed:'label_unprocessed', formatError:'label_format_error',
+    emailError:'label_email_error', processingError:'label_processing_error',
+    needsReview:'label_needs_review', approved:'label_approved',
+    denied:'label_denied', scored:'label_scored'
+  };
+  const labels = {}, missing = [];
+  for (const [key, ck] of Object.entries(defs)) {
+    const name = config[ck];
+    if (!name) { missing.push(ck); continue; }
+    const label = GmailApp.getUserLabelByName(name);
+    if (!label) missing.push('Gmail label: ' + name);
+    else labels[key] = label;
+  }
+  if (missing.length) {
+    Logger.log('ERROR: Missing — ' + missing.join(', ') + '. Run setup() first.');
+    return null;
+  }
+  return labels;
+}
+
+function isValidSubject(subject) {
+  return /^\\d+\\s.+$/.test(subject.trim());
+}
+
+function extractEmailData(message) {
+  const subject = message.getSubject().trim();
+  const match = subject.match(/^(\\d+)\\s(.*)$/);
+  return {
+    date: message.getDate(), subject,
+    sender: message.getFrom(),
+    'rider-number': match ? match[1] : null,
+    'bonus':        match ? match[2] : null
+  };
+}
+`;
+}
+
+function genSidebar(c){
+return `/**
+ * Rally Scoring — Sidebar.gs
+ * Gmail Add-on sidebar for approving, denying, and flagging bonus submissions.
+ * Reads config from the Config sheet via loadConfig() defined in code.js.
+ * Add this as a separate script file named "Sidebar" in Apps Script.
+ */
+
+function buildAddOn(e) {
+  const message = GmailApp.getMessageById(e.gmail.messageId);
+  const thread  = message.getThread();
+  const subject = message.getSubject();
+
+  let config, ss;
+  try {
+    ss     = SpreadsheetApp.openById(getSpreadsheetId_());
+    config = loadConfig(ss);
+  } catch (err) {
+    return errorCard_('Config error', err.message + ' — make sure setup() has been run.');
+  }
+
+  if (!isValidSubject(subject)) {
+    return infoCard_('Not a rally submission', subject,
+      'Subject does not match the required format: Rider Number followed by Bonus ID.');
+  }
+
+  const data         = extractEmailData(message);
+  const threadLabels = thread.getLabels().map(l => l.getName());
+  return buildScoringCard_(data, getStatus_(threadLabels, config), e.gmail.messageId, config, threadLabels);
+}
+
+function buildScoringCard_(data, status, messageId, config, threadLabels) {
+  const card = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle('Bonus submission'));
+
+  const details = CardService.newCardSection().setHeader('Submission details');
+  details.addWidget(CardService.newKeyValue().setTopLabel('Rider number').setContent(data['rider-number'] || '—'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('Bonus ID').setContent(data['bonus'] || '—'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('Submitted').setContent(data.date ? data.date.toLocaleString() : '—'));
+  details.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(data.sender || '—'));
+  card.addSection(details);
+
+  const statusSec = CardService.newCardSection().setHeader('Status');
+  statusSec.addWidget(CardService.newKeyValue().setTopLabel('Current status').setContent(status));
+  card.addSection(statusSec);
+
+  const actions   = CardService.newCardSection().setHeader('Actions');
+  const isScored  = threadLabels.includes(config['label_scored']);
+  const isApproved = threadLabels.includes(config['label_approved']);
+  const isDenied  = threadLabels.includes(config['label_denied']);
+
+  if (isScored) {
+    actions.addWidget(CardService.newTextParagraph().setText('This submission has already been scored. No further action needed.'));
+  } else if (isDenied) {
+    actions.addWidget(CardService.newTextParagraph().setText('This submission has been denied.'));
+  } else {
+    if (!isApproved) {
+      actions.addWidget(CardService.newTextButton()
+        .setText('Approve submission')
+        .setOnClickAction(CardService.newAction().setFunctionName('handleApprove').setParameters({messageId}))
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setBackgroundColor('#1A56AA'));
+    }
+    actions.addWidget(CardService.newTextButton()
+      .setText('Deny submission')
+      .setOnClickAction(CardService.newAction().setFunctionName('handleDeny').setParameters({messageId})));
+    actions.addWidget(CardService.newTextButton()
+      .setText('Flag for review')
+      .setOnClickAction(CardService.newAction().setFunctionName('handleFlag').setParameters({messageId})));
+  }
+  card.addSection(actions);
+  return card.build();
+}
+
+function errorCard_(subtitle, msg) {
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
+    .addSection(CardService.newCardSection().addWidget(CardService.newTextParagraph().setText(msg)))
+    .build();
+}
+
+function infoCard_(subtitle, subject, msg) {
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('Rally Scoring').setSubtitle(subtitle))
+    .addSection(CardService.newCardSection()
+      .addWidget(CardService.newKeyValue().setTopLabel('Subject').setContent(subject))
+      .addWidget(CardService.newTextParagraph().setText(msg)))
+    .build();
+}
+
+function handleApprove(e) {
+  const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
+  if (!config) return notify_('Config error — run setup() first.');
+  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  try {
+    updateSpreadsheet(ss, config, data, parseInt(config['col_approved'], 10), false);
+    thread.addLabel(labels.approved);
+    thread.addLabel(labels.scored);
+    thread.removeLabel(labels.needsReview);
+    thread.refresh();
+    return notifyRefresh_('Approved: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+  } catch (err) {
+    try { thread.addLabel(labels.approved); thread.removeLabel(labels.needsReview); thread.refresh(); } catch(_) {}
+    return notifyRefresh_('Approved (sheet update failed: ' + err.message + ')');
+  }
+}
+
+function handleDeny(e) {
+  const {thread, config, ss, labels, data} = loadContext_(e.parameters.messageId);
+  if (!config) return notify_('Config error — run setup() first.');
+  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  try {
+    updateSpreadsheet(ss, config, data, parseInt(config['col_denied'], 10), false);
+    thread.addLabel(labels.denied);
+    thread.removeLabel(labels.needsReview);
+    thread.removeLabel(labels.approved);
+    thread.refresh();
+    return notifyRefresh_('Denied: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+  } catch (err) {
+    try { thread.addLabel(labels.denied); thread.removeLabel(labels.needsReview); thread.refresh(); } catch(_) {}
+    return notifyRefresh_('Denied (sheet update failed: ' + err.message + ')');
+  }
+}
+
+function handleFlag(e) {
+  const {thread, config, labels, data} = loadContext_(e.parameters.messageId);
+  if (!config) return notify_('Config error — run setup() first.');
+  if (!labels) return notify_('Gmail labels missing — run setup() first.');
+  try {
+    thread.addLabel(labels.needsReview);
+    thread.removeLabel(labels.approved);
+    thread.refresh();
+    return notifyRefresh_('Flagged for review: Rider ' + data['rider-number'] + ' — ' + data['bonus']);
+  } catch (err) { return notify_('Error: ' + err.message); }
+}
+
+function loadContext_(messageId) {
+  const message = GmailApp.getMessageById(messageId);
+  const thread  = message.getThread();
+  const data    = extractEmailData(message);
+  let config = null, ss = null, labels = null;
+  try {
+    ss     = SpreadsheetApp.openById(getSpreadsheetId_());
+    config = loadConfig(ss);
+    labels = loadLabels_(config);
+  } catch(_) {}
+  return {message, thread, config, ss, labels, data};
+}
+
+function getSpreadsheetId_() {
+  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  if (id) return id;
+  throw new Error('Spreadsheet ID not set. Run setup() from code.js first.');
+}
+
+function loadLabels_(config) {
+  const defs = {
+    unprocessed:'label_unprocessed', formatError:'label_format_error',
+    emailError:'label_email_error', processingError:'label_processing_error',
+    needsReview:'label_needs_review', approved:'label_approved',
+    denied:'label_denied', scored:'label_scored'
+  };
+  const labels = {}, missing = [];
+  for (const [key, ck] of Object.entries(defs)) {
+    const name = config[ck];
+    if (!name) { missing.push(ck); continue; }
+    const label = GmailApp.getUserLabelByName(name);
+    if (!label) missing.push('Gmail label: ' + name);
+    else labels[key] = label;
+  }
+  if (missing.length) return null;
+  return labels;
+}
+
+function getStatus_(threadLabels, config) {
+  const has = n => threadLabels.includes(n);
+  if (has(config['label_scored']))            return 'Scored';
+  if (has(config['label_approved']))          return 'Approved — pending score';
+  if (has(config['label_denied']))            return 'Denied';
+  if (has(config['label_needs_review']))      return 'Needs review';
+  if (has(config['label_processing_error']))  return 'Processing error';
+  if (has(config['label_email_error']))       return 'Email error';
+  if (has(config['label_format_error']))      return 'Format error';
+  if (has(config['label_unprocessed']))       return 'Unprocessed';
+  return 'Unknown';
+}
+
+function notify_(text) {
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(text)).build();
+}
+
+function notifyRefresh_(text) {
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(text))
+    .setStateChanged(true).build();
+}
+`;
+}
+
+function genManifest(){
+  return JSON.stringify({
+    timeZone:"America/New_York",dependencies:{},exceptionLogging:"STACKDRIVER",runtimeVersion:"V8",
+    oauthScopes:[
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.addons.execute",
+      "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+      "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+      "https://www.googleapis.com/auth/script.scriptapp",
+      "https://www.googleapis.com/auth/script.external_request"
+    ],
+    addOns:{
+      common:{name:"Rally Scoring",logoUrl:"https://www.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png",useLocaleFromApp:true},
+      gmail:{contextualTriggers:[{unconditional:{},onTriggerFunction:"buildAddOn"}]}
+    }
+  },null,2);
+}
+
+function download(filename, content){
+  const blob = new Blob([content],{type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  if (cur === 4) { cur = 0; showStep(0); return; }
+  if (cur === 3) {
+    const c = cfg();
+    document.getElementById('dlCode').onclick     = () => download('code.js',         genCode(c));
+    document.getElementById('dlSidebar').onclick  = () => download('Sidebar.gs',      genSidebar(c));
+    document.getElementById('dlManifest').onclick = () => download('appsscript.json', genManifest());
+    cur = 4; showStep(4); return;
+  }
+  cur++; showStep(cur);
+});
+
+document.getElementById('btnBack').addEventListener('click', () => {
+  if (cur > 0) { cur--; showStep(cur); }
+});
+
+updateLabelPreview();
+</script>
