@@ -113,26 +113,13 @@ All labels are created automatically by `setup()`. The label prefix is configura
 
 ## Installation
 
-### 1. Run the setup wizard
+### 1. Create the Config sheet
 
-Open the setup wizard in any browser. Fill in:
+Create a new tab in your Google Sheet named exactly `Config`. Add the following columns in row 1: `key`, `value`, `notes`. Then populate it using the [Config sheet reference](#config-sheet-reference) below — one row per key.
 
-- Event name and organizer email
-- Your Google Sheets ID (from the spreadsheet URL)
-- Column layout for rider score sheets
-- Label prefix and sub-label names
-- How often the script should check for new emails
+`setup()` will automatically fill in the `spreadsheet_id` value when it runs, so you can leave that blank.
 
-Click **Generate config** and download `config.csv`.
-
-### 2. Import config.csv into your spreadsheet
-
-1. Open your Google Sheet
-2. **File → Import → Upload** → select `config.csv`
-3. Import location: **Insert new sheet(s)**
-4. Rename the new tab to exactly `Config`
-
-### 3. Install script files in Apps Script
+### 2. Install script files in Apps Script
 
 1. Open your Google Sheet → **Extensions → Apps Script**
 2. Paste `code.js` into `Code.gs`
@@ -226,7 +213,7 @@ All values are editable directly in the Config sheet after setup.
 |-----|---------|-------|
 | `event_name` | | Display only |
 | `organizer_email` | | Display only |
-| `spreadsheet_id` | | Do not change after setup |
+| `spreadsheet_id` | | Written automatically by `setup()` — do not change |
 | `sheet_rider_master` | `Rider Master` | Tab name of the rider roster |
 | `sheet_bonus_master` | `Bonus Master` | Tab with all bonus IDs in column A |
 | `master_col_rider_number` | `Rider Number` | Column header in Rider Master |
@@ -258,7 +245,7 @@ Edit values directly in the Config sheet — the script reads config live on eve
 
 To change the trigger interval or label names, edit the Config sheet then re-run `setup()` to apply.
 
-To reconfigure from scratch, run the setup wizard again, re-import `config.csv`, and re-run `setup()`.
+To reconfigure from scratch, edit the Config sheet values directly and re-run `setup()`.
 
 ---
 

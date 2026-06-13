@@ -28,8 +28,9 @@ function setup() {
   Logger.log('Running setup...');
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
-  Logger.log('Spreadsheet ID saved: ' + ss.getId());
+  const spreadsheetId = ss.getId();
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', spreadsheetId);
+  Logger.log('Spreadsheet ID saved to Script Properties: ' + spreadsheetId);
 
   let config;
   try {
@@ -38,6 +39,19 @@ function setup() {
     Logger.log('FATAL: ' + e.message);
     Logger.log('Import config.csv as a sheet named "Config" before running setup().');
     return;
+  }
+
+  // Write the actual spreadsheet ID into the Config sheet
+  const configSheet = ss.getSheetByName('Config');
+  if (configSheet) {
+    const configRows = configSheet.getDataRange().getValues();
+    for (let i = 1; i < configRows.length; i++) {
+      if (String(configRows[i][0]).trim() === 'spreadsheet_id') {
+        configSheet.getRange(i + 1, 2).setValue(spreadsheetId);
+        Logger.log('Spreadsheet ID written to Config sheet row ' + (i + 1));
+        break;
+      }
+    }
   }
 
   const parentLabel = config['label_parent'] || 'rally';
