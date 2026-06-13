@@ -108,7 +108,7 @@ function createRiderSheet_(ss, config, riderNumber) {
     'Cannot create rider sheet - "' + bonusMasterName + '" not found. ' +
     'Create a sheet with one bonus ID per row in column A.'
   );
-  const sheet = ss.insertSheet(riderNumber);
+  const sheet = ss.insertSheet(riderNumber, ss.getSheets().length); // append after existing sheets
   const headerRow = parseInt(config['header_row'], 10);
   sheet.getRange(headerRow, 1, 1, 7)
     .setValues([['Bonus ID', 'Submitted', 'Submit Time', 'Approved', 'Approve Time', 'Denied', 'Deny Time']])
