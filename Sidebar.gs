@@ -99,9 +99,10 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
   if (isApproved || isDenied || isScored) {
     const revertSec = CardService.newCardSection().setHeader('Revert');
 
+    const firstMsgId = messages[0].getId();
+
     if (isApproved || isScored) {
-      const firstMsgId = messages[0].getId();
-    revertSec.addWidget(CardService.newTextButton()
+      revertSec.addWidget(CardService.newTextButton()
         .setText('Remove approval / revert to needs-review')
         .setOnClickAction(CardService.newAction()
           .setFunctionName('handleRevertApproved')
