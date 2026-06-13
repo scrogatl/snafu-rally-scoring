@@ -115,9 +115,16 @@ function createRiderSheet_(ss, config, riderNumber) {
     .setFontWeight('bold');
   sheet.setFrozenRows(headerRow);
   const lastRow = bonusMaster.getLastRow();
+
+  // Use cell references instead of copying values so any updates to
+  // Bonus Master propagate automatically to all rider sheets
   if (lastRow > 1) {
-    const ids = bonusMaster.getRange(2, 1, lastRow - 1, 1).getValues();
-    sheet.getRange(headerRow + 1, 1, ids.length, 1).setValues(ids);
+    const numBonuses = lastRow - 1;
+    const formulas = [];
+    for (let i = 0; i < numBonuses; i++) {
+      formulas.push(['=\'' + bonusMasterName + '\'!A' + (i + 2)]);
+    }
+    sheet.getRange(headerRow + 1, 1, formulas.length, 1).setFormulas(formulas);
   }
   sheet.autoResizeColumn(1);
   Logger.log('Created rider sheet: ' + riderNumber);
