@@ -7,7 +7,7 @@ Automated bonus scoring for rally events via Google Apps Script. Riders submit b
 ## How it works
 
 ```
-Rider sends email: "42 BP-07"
+Rider sends email: "42 ABCD"
         |
         v
   rally/unprocessed
@@ -15,12 +15,12 @@ Rider sends email: "42 BP-07"
   Script scans ALL messages in thread
   (any valid message passes validation)
         |
-        |-- bad format on all ---------> rally/format-error
+        |-- bad format on all ---------> rally/subject-line-error
         |-- unregistered sender -------> rally/email-error
         |-- spreadsheet error ---------> rally/processing-error
         |
         v
-  rally/needs-review   <-- scorer reviews in Gmail sidebar
+  rally/email-requires-review   <-- scorer reviews in Gmail sidebar
         |
         |-- Deny (any message) --------> rally/denied
         |                                (X written to sheet immediately)
@@ -74,8 +74,8 @@ A tab named **`Bonus Master`** (configurable). Column A lists every bonus ID, on
 
 | Bonus ID |
 |----------|
-| BP-01    |
-| BP-02    |
+| ABCD     |
+| WXYZ     |
 
 Rider score sheets reference this tab with cell formulas (`='Bonus Master'!A2` etc.) so any updates to Bonus Master propagate automatically.
 
@@ -101,11 +101,11 @@ All labels are created automatically by `setup()`. The label prefix is configura
 |-------|---------|
 | `rally` | Parent label — click to see all submissions at once |
 | `rally/unprocessed` | Incoming submission, not yet processed |
-| `rally/needs-review` | Valid submission awaiting scorer decision |
+| `rally/email-requires-review` | Valid submission awaiting scorer decision |
 | `rally/approved` | Scorer approved — X written to sheet immediately |
 | `rally/scored` | Fully recorded in the spreadsheet |
 | `rally/denied` | Scorer denied — X written to sheet immediately |
-| `rally/format-error` | No message in thread matched the required subject format |
+| `rally/subject-line-error` | No message in thread matched the required subject format |
 | `rally/email-error` | Sender not registered for that rider number |
 | `rally/processing-error` | Script error — check Executions log |
 
@@ -175,8 +175,8 @@ Each message in the thread shows its subject, sender, date, and:
 
 Shown at the bottom of the sidebar when a thread has been approved or denied:
 
-- **Remove approval / revert to needs-review** — clears the Approved column in the sheet and moves the thread back to `rally/needs-review`
-- **Remove denial / revert to needs-review** — clears the Denied column in the sheet and moves the thread back to `rally/needs-review`
+- **Remove approval / revert to email-requires-review** — clears the Approved column in the sheet and moves the thread back to `rally/email-requires-review`
+- **Remove denial / revert to email-requires-review** — clears the Denied column in the sheet and moves the thread back to `rally/email-requires-review`
 
 This allows scorers to approve a different attempt after an initial denial, or correct a mistake.
 
@@ -187,21 +187,22 @@ This allows scorers to approve a different attempt after an initial denial, or c
 Riders send email to your scoring address with the subject:
 
 ```
-<RiderNumber> <BonusID>
+<RiderNumber> <4-letter BonusCode>
 ```
 
 Examples:
 
 ```
-42 BP-07
-7 checkpoint-alpha
-101 BONUS_99
+42 ABCD
+7 WXYZ
+101 abcd
 ```
 
 - Rider number must be numeric
-- Anything after the first space is the Bonus ID — matched against Column A of the rider's sheet
+- Bonus code is exactly 4 alphabetic characters (letters only, no numbers) - case-insensitive
+- Zero or more spaces are allowed between the rider number and the bonus code
 - Email must come from the rider's registered address in Rider Master
-- Up to three emails per bonus can be sent in the same thread — each can be approved or denied independently from the sidebar
+- Up to three emails per bonus can be sent in the same thread - each can be approved or denied independently from the sidebar
 
 ---
 
@@ -229,10 +230,10 @@ All values are editable directly in the Config sheet after setup.
 | `trigger_interval_min` | `10` | Re-run `setup()` to change |
 | `label_parent` | `rally` | Bare parent label |
 | `label_unprocessed` | `rally/unprocessed` | |
-| `label_format_error` | `rally/format-error` | |
+| `label_format_error` | `rally/subject-line-error` | |
 | `label_email_error` | `rally/email-error` | |
 | `label_processing_error` | `rally/processing-error` | |
-| `label_needs_review` | `rally/needs-review` | |
+| `label_needs_review` | `rally/email-requires-review` | |
 | `label_approved` | `rally/approved` | |
 | `label_denied` | `rally/denied` | |
 | `label_scored` | `rally/scored` | |
@@ -246,6 +247,8 @@ Edit values directly in the Config sheet — the script reads config live on eve
 To change the trigger interval or label names, edit the Config sheet then re-run `setup()` to apply.
 
 To reconfigure from scratch, edit the Config sheet values directly and re-run `setup()`.
+
+> Note: If you have an existing deployment using the older label names rally/needs-review or rally/format-error, update label_needs_review and label_format_error in the Config sheet to rally/email-requires-review and rally/subject-line-error, then re-run setup(). This creates the new Gmail labels - existing emails keep their old labels until relabelled manually or reprocessed.
 
 ---
 
@@ -310,7 +313,7 @@ function deleteAllRiderSheets() {
 |---------|-------|
 | "Config sheet not found" | Import `config.csv` and rename the tab to `Config`, then re-run `setup()` |
 | Script stops immediately | One or more Gmail labels are missing — re-run `setup()` |
-| Email tagged `format-error` | Subject must be `<number> <space> <bonusID>` — no prefix, no punctuation |
+| Email tagged `subject-line-error` | Subject must be a number followed by exactly 4 letters (any case, any amount of spacing) - no digits in the bonus code |
 | Email tagged `email-error` | Sender address doesn't match Rider Master — check for typos or alias issues |
 | Email tagged `processing-error` | Apps Script → Executions → click the failed run for the full error |
 | Bonus ID not found | Check Column A of the rider's sheet — spacing and capitalisation must match exactly |

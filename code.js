@@ -277,7 +277,7 @@ function updateSpreadsheet(ss, config, data, columnIndex, useEmailTime, value) {
   const values   = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
 
   for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0]).trim() === bonusToFind.trim()) {
+    if (String(values[i][0]).trim().toUpperCase() === bonusToFind.trim().toUpperCase()) {
       const row = startRow + i;
       if (value === null) {
         // Revert - clear both value and timestamp
@@ -351,17 +351,17 @@ function loadLabels_(config) {
 }
 
 function isValidSubject(subject) {
-  return /^\d+\s.+$/.test(subject.trim());
+  return /^\d+\s*[A-Za-z]{4}$/.test(subject.trim());
 }
 
 function extractEmailData(message) {
   const subject = message.getSubject().trim();
-  const match = subject.match(/^(\d+)\s(.*)$/);
+  const match = subject.match(/^(\d+)\s*([A-Za-z]{4})$/);
   return {
     date:          message.getDate(),
     subject:       subject,
     sender:        message.getFrom(),
     'rider-number': match ? match[1] : null,
-    'bonus':        match ? match[2] : null,
+    'bonus':        match ? match[2].toUpperCase() : null,
   };
 }

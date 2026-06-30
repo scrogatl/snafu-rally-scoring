@@ -26,7 +26,7 @@ function buildAddOn(e) {
   if (!hasValidMessage) {
     return infoCard_('Not a rally submission',
       message.getSubject(),
-      'No message in this thread matches the required format: Rider Number followed by Bonus ID.');
+      'No message in this thread matches the required format: Rider Number followed by a 4-letter Bonus Code.');
   }
 
   const threadLabels = thread.getLabels().map(l => l.getName());
@@ -50,11 +50,31 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
   );
   card.addSection(statusSec);
 
-  // One section per message
-  const isScored  = threadLabels.includes(config['label_scored']);
-  const isDenied  = threadLabels.includes(config['label_denied']);
-  const isApproved = threadLabels.includes(config['label_approved']);
+  const isScored      = threadLabels.includes(config['label_scored']);
+  const isDenied       = threadLabels.includes(config['label_denied']);
+  const isApproved     = threadLabels.includes(config['label_approved']);
+  const isFormatError  = threadLabels.includes(config['label_format_error']);
+  const isEmailError    = threadLabels.includes(config['label_email_error']);
+  const isProcError     = threadLabels.includes(config['label_processing_error']);
+  const isUnprocessed   = threadLabels.includes(config['label_unprocessed']);
+  const hasErrorLabel  = isFormatError || isEmailError || isProcError;
 
+  // Error explanation section - shown once at the top if any error label is present
+  if (hasErrorLabel) {
+    const errSec = CardService.newCardSection().setHeader('Error');
+    let errText = '';
+    if (isFormatError) {
+      errText = 'Subject line does not match the required format: Rider Number followed by a 4-letter Bonus Code (e.g. "42 ABCD"). Ask the rider to resend with the correct subject.';
+    } else if (isEmailError) {
+      errText = 'The sender email does not match the registered address for this rider number in Rider Master. Verify the rider\'s registered email or check for a typo.';
+    } else if (isProcError) {
+      errText = 'A bonus code error occurred while recording this submission - the bonus code could not be matched in the rider sheet. Check the Apps Script Executions log for details.';
+    }
+    errSec.addWidget(CardService.newTextParagraph().setText(errText));
+    card.addSection(errSec);
+  }
+
+  // One section per message
   messages.forEach(function(message, idx) {
     const subject = message.getSubject();
     const valid   = isValidSubject(subject);
@@ -73,6 +93,10 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
       sec.addWidget(CardService.newTextParagraph().setText('Thread is scored. Use Revert below to undo.'));
     } else if (isDenied) {
       sec.addWidget(CardService.newTextParagraph().setText('Thread is denied. Use Revert below to undo.'));
+    } else if (hasErrorLabel) {
+      sec.addWidget(CardService.newTextParagraph().setText('Approve/Deny unavailable while an error label is present. See Error section above.'));
+    } else if (isUnprocessed) {
+      sec.addWidget(CardService.newTextParagraph().setText('Waiting for the next processing run to validate this submission. Approve/Deny will be available once it moves to Email Requires Review.'));
     } else {
       // Approve button for this message
       if (!isApproved) {
@@ -84,11 +108,11 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
           .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
           .setBackgroundColor('#1A56AA'));
       }
-      // Deny button for this message
+      // Deny button for this message - goes to confirmation card first
       sec.addWidget(CardService.newTextButton()
         .setText('Deny this message')
         .setOnClickAction(CardService.newAction()
-          .setFunctionName('handleDeny')
+          .setFunctionName('showDenyConfirmation')
           .setParameters({ msgId: msgId, threadId: threadId })));
     }
 
@@ -103,7 +127,7 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
 
     if (isApproved || isScored) {
       revertSec.addWidget(CardService.newTextButton()
-        .setText('Remove approval / revert to needs-review')
+        .setText('Remove approval / revert to email-requires-review')
         .setOnClickAction(CardService.newAction()
           .setFunctionName('handleRevertApproved')
           .setParameters({ firstMsgId: firstMsgId })));
@@ -111,7 +135,7 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
 
     if (isDenied) {
       revertSec.addWidget(CardService.newTextButton()
-        .setText('Remove denial / revert to needs-review')
+        .setText('Remove denial / revert to email-requires-review')
         .setOnClickAction(CardService.newAction()
           .setFunctionName('handleRevertDenied')
           .setParameters({ firstMsgId: firstMsgId })));
@@ -121,6 +145,75 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
   }
 
   return card.build();
+}
+
+// --- Deny confirmation card ----------------------------------------------------
+
+/**
+ * Shows a confirmation card before denying. Nothing is changed in Gmail
+ * or the spreadsheet until the scorer clicks Confirm.
+ */
+function showDenyConfirmation(e) {
+  const msgId    = e.parameters.msgId;
+  const threadId = e.parameters.threadId;
+
+  const card = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader()
+      .setTitle('Confirm Bonus Denial')
+      .setSubtitle('This will mark the bonus as denied'));
+
+  const sec = CardService.newCardSection();
+  sec.addWidget(CardService.newTextParagraph()
+    .setText('Are you sure you want to deny this bonus submission? This will record a denial in the spreadsheet and apply the denied label.'));
+
+  sec.addWidget(CardService.newTextButton()
+    .setText('Confirm Bonus Denial')
+    .setOnClickAction(CardService.newAction()
+      .setFunctionName('handleDeny')
+      .setParameters({ msgId: msgId, threadId: threadId }))
+    .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+    .setBackgroundColor('#B3261E'));
+
+  sec.addWidget(CardService.newTextButton()
+    .setText('Cancel')
+    .setOnClickAction(CardService.newAction()
+      .setFunctionName('cancelDeny')
+      .setParameters({ msgId: msgId })));
+
+  card.addSection(sec);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(card.build()))
+    .build();
+}
+
+/**
+ * Cancel button on the deny confirmation card - returns to the main
+ * scoring card without changing anything.
+ */
+function cancelDeny(e) {
+  const msgId = e.parameters.msgId;
+  const message = GmailApp.getMessageById(msgId);
+  const thread  = message.getThread();
+  const messages = thread.getMessages();
+
+  let config, ss;
+  try {
+    ss     = SpreadsheetApp.openById(getSpreadsheetId_());
+    config = loadConfig(ss);
+  } catch (err) {
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().popCard())
+      .build();
+  }
+
+  const threadLabels = thread.getLabels().map(l => l.getName());
+  const threadStatus = getStatus_(threadLabels, config);
+  const card = buildScoringCard_(messages, threadStatus, thread.getId(), config, threadLabels, ss);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().popCard().updateCard(card))
+    .build();
 }
 
 // --- Action handlers ----------------------------------------------------------
@@ -140,7 +233,17 @@ function handleApprove(e) {
     ctx.thread.removeLabel(ctx.labels.needsReview);
     ctx.thread.removeLabel(ctx.labels.denied);
     ctx.thread.refresh();
-    return notifyRefresh_('Approved: Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus']);
+
+    // Rebuild and push the updated card so the sidebar reflects the new state immediately
+    const messages      = ctx.thread.getMessages();
+    const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
+    const threadStatus  = getStatus_(threadLabels, ctx.config);
+    const card = buildScoringCard_(messages, threadStatus, ctx.thread.getId(), ctx.config, threadLabels, ctx.ss);
+
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Bonus Accepted'))
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
   } catch (err) {
     try {
       ctx.thread.addLabel(ctx.labels.approved);
@@ -165,7 +268,17 @@ function handleDeny(e) {
     ctx.thread.removeLabel(ctx.labels.approved);
     ctx.thread.removeLabel(ctx.labels.scored);
     ctx.thread.refresh();
-    return notifyRefresh_('Denied: Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus']);
+
+    // Return to the main scoring card with an updated state and confirmation toast
+    const messages = ctx.thread.getMessages();
+    const threadLabels = ctx.thread.getLabels().map(l => l.getName());
+    const threadStatus = getStatus_(threadLabels, ctx.config);
+    const card = buildScoringCard_(messages, threadStatus, ctx.thread.getId(), ctx.config, threadLabels, ctx.ss);
+
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Bonus Denied'))
+      .setNavigation(CardService.newNavigation().popCard().updateCard(card))
+      .build();
   } catch (err) {
     try {
       ctx.thread.addLabel(ctx.labels.denied);
@@ -189,7 +302,16 @@ function handleRevertApproved(e) {
     ctx.thread.removeLabel(ctx.labels.scored);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
-    return notifyRefresh_('Reverted to needs-review.');
+
+    const messages      = ctx.thread.getMessages();
+    const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
+    const threadStatus  = getStatus_(threadLabels, ctx.config);
+    const card = buildScoringCard_(messages, threadStatus, ctx.thread.getId(), ctx.config, threadLabels, ctx.ss);
+
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Reverted to email-requires-review.'))
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
   } catch (err) {
     return notify_('Error: ' + err.message);
   }
@@ -207,7 +329,16 @@ function handleRevertDenied(e) {
     ctx.thread.removeLabel(ctx.labels.denied);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
-    return notifyRefresh_('Reverted to needs-review.');
+
+    const messages      = ctx.thread.getMessages();
+    const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
+    const threadStatus  = getStatus_(threadLabels, ctx.config);
+    const card = buildScoringCard_(messages, threadStatus, ctx.thread.getId(), ctx.config, threadLabels, ctx.ss);
+
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Reverted to email-requires-review.'))
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
   } catch (err) {
     return notify_('Error: ' + err.message);
   }
@@ -284,10 +415,10 @@ function getStatus_(threadLabels, config) {
   if (has(config['label_scored']))            return 'Scored';
   if (has(config['label_approved']))          return 'Approved - pending score';
   if (has(config['label_denied']))            return 'Denied';
-  if (has(config['label_needs_review']))      return 'Needs review';
-  if (has(config['label_processing_error']))  return 'Processing error';
+  if (has(config['label_needs_review']))      return 'Email Requires Review';
+  if (has(config['label_processing_error']))  return 'Bonus Code Error';
   if (has(config['label_email_error']))       return 'Email error';
-  if (has(config['label_format_error']))      return 'Format error';
+  if (has(config['label_format_error']))      return 'Subject Line Error';
   if (has(config['label_unprocessed']))       return 'Unprocessed';
   return 'Unknown';
 }
