@@ -1,7 +1,7 @@
 /**
  * Rally Scoring - code.js
  * Config is read at runtime from the "Config" sheet.
- * Run setup() once after importing config.csv as the Config sheet.
+ * Run setup() once after creating and populating the Config sheet.
  */
 
 // --- Config loader ------------------------------------------------------------
@@ -18,9 +18,25 @@ function loadConfig(ss) {
   return config;
 }
 
+/**
+ * Reads a numeric Config value. Falls back to defaultValue when the key is
+ * missing/blank; throws a clear error when the key is present but not a number.
+ */
+function configInt_(config, key, defaultValue) {
+  const raw = config[key];
+  if (raw === undefined || raw === '') {
+    if (defaultValue !== undefined) return defaultValue;
+    throw new Error('Config key "' + key + '" is missing.');
+  }
+  const parsed = parseInt(raw, 10);
+  if (isNaN(parsed)) throw new Error('Config key "' + key + '" is not a number: "' + raw + '"');
+  return parsed;
+}
+
 // --- One-time setup -----------------------------------------------------------
 // Before running setup():
-//   1. Import config.csv into your spreadsheet as a sheet named "Config"
+//   1. Create a sheet named "Config" with key/value/notes columns and populate
+//      it per the Config sheet reference in README.md
 //   2. Populate your Rider Master and Bonus Master sheets
 // Then run this function once.
 
@@ -37,7 +53,7 @@ function setup() {
     config = loadConfig(ss);
   } catch (e) {
     Logger.log('FATAL: ' + e.message);
-    Logger.log('Import config.csv as a sheet named "Config" before running setup().');
+    Logger.log('Create and populate a sheet named "Config" before running setup().');
     return;
   }
 
@@ -85,7 +101,7 @@ function setup() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'processEmails')
     .forEach(t => ScriptApp.deleteTrigger(t));
-  const intervalMin = parseInt(config['trigger_interval_min'], 10) || 10;
+  const intervalMin = configInt_(config, 'trigger_interval_min', 10);
   ScriptApp.newTrigger('processEmails').timeBased().everyMinutes(intervalMin).create();
 
   Logger.log('Setup complete. Trigger set for every ' + intervalMin + ' minutes.');
@@ -123,7 +139,7 @@ function createRiderSheet_(ss, config, riderNumber) {
     'Create a sheet with one bonus ID per row in column A.'
   );
   const sheet = ss.insertSheet(riderNumber, ss.getSheets().length); // append after existing sheets
-  const headerRow = parseInt(config['header_row'], 10);
+  const headerRow = configInt_(config, 'header_row', 1);
   sheet.getRange(headerRow, 1, 1, 7)
     .setValues([['Bonus ID', 'Submitted', 'Submit Time', 'Approved', 'Approve Time', 'Denied', 'Deny Time']])
     .setFontWeight('bold');
@@ -203,7 +219,10 @@ function handleUnprocessedThread(ss, config, thread, labels) {
   if (validMessage) {
     const data = extractEmailData(validMessage);
     try {
-      updateSpreadsheet(ss, config, data, parseInt(config['col_submitted'], 10), true);
+      updateSpreadsheet(ss, config, data,
+        configInt_(config, 'col_submitted', 2),
+        configInt_(config, 'col_submitted_time', 3),
+        true);
       thread.addLabel(labels.needsReview);
       thread.removeLabel(labels.unprocessed);
       thread.refresh();
@@ -228,69 +247,103 @@ function handleUnprocessedThread(ss, config, thread, labels) {
 }
 
 /**
- * Records an approval. Uses the first valid message in the thread
- * for rider/bonus data.
+ * Records an approval for threads where the "approved" label was applied
+ * directly in Gmail rather than via the sidebar's per-message Approve button
+ * (the sidebar already marks such threads "scored", so this only runs for
+ * the manual-label fallback path). Uses the first valid message in the
+ * thread for rider/bonus data - if other valid messages in the thread
+ * reference a different rider/bonus, there's no way to know which one the
+ * manual label was meant for, so we flag it instead of guessing.
  */
 function addApprovedCheck(ss, config, thread, labels) {
   const messages = thread.getMessages();
   Logger.log('Recording approval for thread: ' + messages[0].getSubject());
 
-  // Find the first valid message to get rider/bonus data
-  for (const message of messages) {
-    if (!isValidSubject(message.getSubject())) continue;
-    const data = extractEmailData(message);
-    if (!data['rider-number'] || !data['bonus']) continue;
-    try {
-      updateSpreadsheet(ss, config, data, parseInt(config['col_approved'], 10), false);
-      thread.removeLabel(labels.needsReview);
-      thread.addLabel(labels.scored);
-      thread.refresh();
-      Logger.log('-> Approved: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
-    } catch (e) {
-      Logger.log('-> Error: ' + e.message);
-      thread.addLabel(labels.processingError);
-      thread.refresh();
-    }
+  const validMessages = messages.filter(m => isValidSubject(m.getSubject()));
+  if (!validMessages.length) {
+    Logger.log('-> No valid message found in approved thread.');
     return;
   }
-  Logger.log('-> No valid message found in approved thread.');
+
+  const data = extractEmailData(validMessages[0]);
+  if (!data['rider-number'] || !data['bonus']) {
+    Logger.log('-> No valid message found in approved thread.');
+    return;
+  }
+
+  const ambiguous = validMessages.some(m => {
+    const d = extractEmailData(m);
+    return d['rider-number'] !== data['rider-number'] || d['bonus'] !== data['bonus'];
+  });
+  if (ambiguous) {
+    Logger.log('-> Skipped: thread has multiple valid messages referencing different ' +
+      'rider/bonus values, so it is unclear which one the manual "approved" label ' +
+      'was meant for. Use the sidebar\'s per-message Approve button instead.');
+    thread.addLabel(labels.processingError);
+    thread.refresh();
+    return;
+  }
+
+  try {
+    updateSpreadsheet(ss, config, data,
+      configInt_(config, 'col_approved', 4),
+      configInt_(config, 'col_approved_time', 5),
+      false);
+    thread.removeLabel(labels.needsReview);
+    thread.addLabel(labels.scored);
+    thread.refresh();
+    Logger.log('-> Approved: Rider ' + data['rider-number'] + ' - ' + data['bonus']);
+  } catch (e) {
+    Logger.log('-> Error: ' + e.message);
+    thread.addLabel(labels.processingError);
+    thread.refresh();
+  }
 }
 
 // --- Spreadsheet update -------------------------------------------------------
 
 /**
- * Finds the bonus row and writes X + timestamp to columnIndex.
- * Pass null for value to clear the cell (revert).
+ * Finds the bonus row and writes X + timestamp to columnIndex / timeColumnIndex.
+ * Pass null for value to clear both cells (revert).
+ *
+ * Holds a script-wide lock for the read-find-write sequence so the time-driven
+ * trigger and interactive sidebar clicks can't race on the same row.
  */
-function updateSpreadsheet(ss, config, data, columnIndex, useEmailTime, value) {
+function updateSpreadsheet(ss, config, data, columnIndex, timeColumnIndex, useEmailTime, value) {
   const riderNumber = data['rider-number'];
   const bonusToFind = data['bonus'];
 
-  let sheet = ss.getSheetByName(riderNumber);
-  if (!sheet) sheet = createRiderSheet_(ss, config, riderNumber);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    let sheet = ss.getSheetByName(riderNumber);
+    if (!sheet) sheet = createRiderSheet_(ss, config, riderNumber);
 
-  const lastRow  = sheet.getLastRow();
-  const startRow = parseInt(config['header_row'], 10) + 1;
-  if (lastRow < startRow) throw new Error('No data rows in sheet ' + riderNumber);
+    const lastRow  = sheet.getLastRow();
+    const startRow = configInt_(config, 'header_row', 1) + 1;
+    if (lastRow < startRow) throw new Error('No data rows in sheet ' + riderNumber);
 
-  const bonusCol = parseInt(config['col_bonus_id'], 10);
-  const values   = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
+    const bonusCol = configInt_(config, 'col_bonus_id', 1);
+    const values   = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
 
-  for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0]).trim().toUpperCase() === bonusToFind.trim().toUpperCase()) {
-      const row = startRow + i;
-      if (value === null) {
-        // Revert - clear both value and timestamp
-        sheet.getRange(row, columnIndex).clearContent();
-        sheet.getRange(row, columnIndex + 1).clearContent();
-      } else {
-        sheet.getRange(row, columnIndex).setValue('X');
-        sheet.getRange(row, columnIndex + 1).setValue(useEmailTime ? data.date : new Date());
+    for (let i = 0; i < values.length; i++) {
+      if (String(values[i][0]).trim().toUpperCase() === bonusToFind.trim().toUpperCase()) {
+        const row = startRow + i;
+        if (value === null) {
+          // Revert - clear both value and timestamp
+          sheet.getRange(row, columnIndex).clearContent();
+          sheet.getRange(row, timeColumnIndex).clearContent();
+        } else {
+          sheet.getRange(row, columnIndex).setValue('X');
+          sheet.getRange(row, timeColumnIndex).setValue(useEmailTime ? data.date : new Date());
+        }
+        return;
       }
-      return;
     }
+    throw new Error('Bonus ID "' + bonusToFind + '" not found in sheet ' + riderNumber);
+  } finally {
+    lock.releaseLock();
   }
-  throw new Error('Bonus ID "' + bonusToFind + '" not found in sheet ' + riderNumber);
 }
 
 // --- Validation ---------------------------------------------------------------
@@ -324,6 +377,7 @@ function validateEmailAddress(ss, config, senderString, riderNumber) {
 }
 
 // --- Helpers ------------------------------------------------------------------
+// Shared with Sidebar.gs via Apps Script's global scope - don't duplicate there.
 function loadLabels_(config) {
   const defs = {
     unprocessed:     'label_unprocessed',

@@ -227,12 +227,19 @@ function handleApprove(e) {
 
   try {
     // Write approval to sheet using this specific message's data
-    updateSpreadsheet(ctx.ss, ctx.config, ctx.data, parseInt(ctx.config['col_approved'], 10), false);
+    updateSpreadsheet(ctx.ss, ctx.config, ctx.data,
+      configInt_(ctx.config, 'col_approved', 4),
+      configInt_(ctx.config, 'col_approved_time', 5),
+      false);
     ctx.thread.addLabel(ctx.labels.approved);
     ctx.thread.addLabel(ctx.labels.scored);
     ctx.thread.removeLabel(ctx.labels.needsReview);
     ctx.thread.removeLabel(ctx.labels.denied);
     ctx.thread.refresh();
+
+    // Remember exactly which message was approved so Revert targets the right row
+    setActionedMessage_(threadId, 'approved', msgId);
+    clearActionedMessage_(threadId, 'denied');
 
     // Rebuild and push the updated card so the sidebar reflects the new state immediately
     const messages      = ctx.thread.getMessages();
@@ -248,6 +255,8 @@ function handleApprove(e) {
     try {
       ctx.thread.addLabel(ctx.labels.approved);
       ctx.thread.removeLabel(ctx.labels.needsReview);
+      ctx.thread.removeLabel(ctx.labels.denied);
+      ctx.thread.removeLabel(ctx.labels.scored);
       ctx.thread.refresh();
     } catch(_) {}
     return notifyRefresh_('Approved (sheet update failed: ' + err.message + ')');
@@ -262,12 +271,19 @@ function handleDeny(e) {
   if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
 
   try {
-    updateSpreadsheet(ctx.ss, ctx.config, ctx.data, parseInt(ctx.config['col_denied'], 10), false);
+    updateSpreadsheet(ctx.ss, ctx.config, ctx.data,
+      configInt_(ctx.config, 'col_denied', 6),
+      configInt_(ctx.config, 'col_denied_time', 7),
+      false);
     ctx.thread.addLabel(ctx.labels.denied);
     ctx.thread.removeLabel(ctx.labels.needsReview);
     ctx.thread.removeLabel(ctx.labels.approved);
     ctx.thread.removeLabel(ctx.labels.scored);
     ctx.thread.refresh();
+
+    // Remember exactly which message was denied so Revert targets the right row
+    setActionedMessage_(threadId, 'denied', msgId);
+    clearActionedMessage_(threadId, 'approved');
 
     // Return to the main scoring card with an updated state and confirmation toast
     const messages = ctx.thread.getMessages();
@@ -283,6 +299,8 @@ function handleDeny(e) {
     try {
       ctx.thread.addLabel(ctx.labels.denied);
       ctx.thread.removeLabel(ctx.labels.needsReview);
+      ctx.thread.removeLabel(ctx.labels.approved);
+      ctx.thread.removeLabel(ctx.labels.scored);
       ctx.thread.refresh();
     } catch(_) {}
     return notifyRefresh_('Denied (sheet update failed: ' + err.message + ')');
@@ -295,13 +313,20 @@ function handleRevertApproved(e) {
   if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
 
   try {
-    // Clear approved column and timestamp in sheet
-    const data = getFirstValidData_(ctx.thread) || ctx.data;
-    if (data) updateSpreadsheet(ctx.ss, ctx.config, data, parseInt(ctx.config['col_approved'], 10), false, null);
+    // Clear approved column and timestamp in sheet - target the message that was
+    // actually approved, not just the first message in the thread
+    const threadId = ctx.thread.getId();
+    const data = dataForMsgId_(getActionedMessage_(threadId, 'approved')) ||
+      getFirstValidData_(ctx.thread) || ctx.data;
+    if (data) updateSpreadsheet(ctx.ss, ctx.config, data,
+      configInt_(ctx.config, 'col_approved', 4),
+      configInt_(ctx.config, 'col_approved_time', 5),
+      false, null);
     ctx.thread.removeLabel(ctx.labels.approved);
     ctx.thread.removeLabel(ctx.labels.scored);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
+    clearActionedMessage_(threadId, 'approved');
 
     const messages      = ctx.thread.getMessages();
     const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
@@ -323,12 +348,19 @@ function handleRevertDenied(e) {
   if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
 
   try {
-    // Clear denied column and timestamp in sheet
-    const data = getFirstValidData_(ctx.thread) || ctx.data;
-    if (data) updateSpreadsheet(ctx.ss, ctx.config, data, parseInt(ctx.config['col_denied'], 10), false, null);
+    // Clear denied column and timestamp in sheet - target the message that was
+    // actually denied, not just the first message in the thread
+    const threadId = ctx.thread.getId();
+    const data = dataForMsgId_(getActionedMessage_(threadId, 'denied')) ||
+      getFirstValidData_(ctx.thread) || ctx.data;
+    if (data) updateSpreadsheet(ctx.ss, ctx.config, data,
+      configInt_(ctx.config, 'col_denied', 6),
+      configInt_(ctx.config, 'col_denied_time', 7),
+      false, null);
     ctx.thread.removeLabel(ctx.labels.denied);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
+    clearActionedMessage_(threadId, 'denied');
 
     const messages      = ctx.thread.getMessages();
     const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
@@ -381,34 +413,44 @@ function getFirstValidData_(thread) {
   return null;
 }
 
+/**
+ * Remembers which specific message was approved/denied for a thread, so
+ * Revert can target that exact message's data instead of guessing from
+ * the first message in the thread.
+ */
+function setActionedMessage_(threadId, kind, msgId) {
+  PropertiesService.getScriptProperties().setProperty(kind + '_msg_' + threadId, msgId);
+}
+
+function getActionedMessage_(threadId, kind) {
+  return PropertiesService.getScriptProperties().getProperty(kind + '_msg_' + threadId);
+}
+
+function clearActionedMessage_(threadId, kind) {
+  PropertiesService.getScriptProperties().deleteProperty(kind + '_msg_' + threadId);
+}
+
+/**
+ * extractEmailData for a message ID, tolerating messages that no longer
+ * exist or no longer have a valid subject.
+ */
+function dataForMsgId_(msgId) {
+  if (!msgId) return null;
+  try {
+    const msg = GmailApp.getMessageById(msgId);
+    return isValidSubject(msg.getSubject()) ? extractEmailData(msg) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function getSpreadsheetId_() {
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (id) return id;
   throw new Error('Spreadsheet ID not set. Run setup() from code.js first.');
 }
 
-function loadLabels_(config) {
-  const defs = {
-    unprocessed:     'label_unprocessed',
-    formatError:     'label_format_error',
-    emailError:      'label_email_error',
-    processingError: 'label_processing_error',
-    needsReview:     'label_needs_review',
-    approved:        'label_approved',
-    denied:          'label_denied',
-    scored:          'label_scored',
-  };
-  const labels = {}, missing = [];
-  for (const [key, ck] of Object.entries(defs)) {
-    const name = config[ck];
-    if (!name) { missing.push(ck); continue; }
-    const label = GmailApp.getUserLabelByName(name);
-    if (!label) missing.push('Gmail label: ' + name);
-    else labels[key] = label;
-  }
-  if (missing.length) return null;
-  return labels;
-}
+// loadLabels_ is defined once in code.js and shared via Apps Script's global scope.
 
 function getStatus_(threadLabels, config) {
   const has = n => threadLabels.includes(n);
