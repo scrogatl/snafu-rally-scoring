@@ -526,7 +526,7 @@ multiple retries of the same bonus), it proceeds exactly like a single-message t
 
 ### 7.7 Gmail Add-on entry point — `buildAddOn(e)` (`Sidebar.gs`)
 
-Registered in the manifest as the unconditional Gmail contextual trigger (§9), so it
+Registered in the manifest as the unconditional Gmail contextual trigger (§8), so it
 runs every time a user opens any email while the add-on is installed.
 
 ```js
