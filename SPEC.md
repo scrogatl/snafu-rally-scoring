@@ -578,7 +578,10 @@ steady state after a successful approve) reports as `'Scored'`, not
 
 ### 7.9 `buildScoringCard_(messages, threadStatus, threadId, config, threadLabels, ss)`
 
-Builds the card the user actually sees. Section order, exactly:
+Builds the card the user actually sees. The card header (not a section) is always
+title `'Rally Scoring'`, subtitle `'Thread: ' + messages.length + ' message(s)'` —
+same title as `errorCard_`/`infoCard_` (§7.7), but with this card's own subtitle.
+Section order, exactly:
 
 1. **"Thread status"** section — one key/value widget, top label `'Status'`,
    content = `threadStatus`.
@@ -612,11 +615,16 @@ Builds the card the user actually sees. Section order, exactly:
 
 `showDenyConfirmation(e)` pushes a second card (`CardService...pushCard`, not a
 replace) titled `'Confirm Bonus Denial'`, subtitle `'This will mark the bonus as
-denied'`, one paragraph, a filled red (`#B3261E`) **Confirm Bonus Denial** button
-(action `handleDeny`) and a plain **Cancel** button (action `cancelDeny`, parameter
-`{msgId}` only). `cancelDeny` pops the confirmation card and rebuilds+updates the
+denied'`, one paragraph — exact text `'Are you sure you want to deny this bonus
+submission? This will record a denial in the spreadsheet and apply the denied
+label.'` — a filled red (`#B3261E`) **Confirm Bonus Denial** button (action
+`handleDeny`) and a plain **Cancel** button (action `cancelDeny`, parameter `{msgId}`
+only). On success, `cancelDeny` pops the confirmation card and rebuilds+updates the
 underlying scoring card from current state — it makes **no** changes to Gmail or the
-spreadsheet.
+spreadsheet. If resolving `ss`/`config` fails inside `cancelDeny` (e.g. `setup()` was
+never run), it still pops the confirmation card but returns **without** an
+`updateCard` — the card underneath is left showing whatever it displayed before the
+confirmation card was pushed, not refreshed with current state.
 
 ### 7.10 Action handlers and the actioned-message record
 
@@ -674,10 +682,11 @@ try {
 
 **`handleDeny`** is the mirror image: writes to `col_denied`/`col_denied_time`, on
 success adds `denied` and removes `needsReview`/`approved`/`scored`, records
-`setActionedMessage_(threadId,'denied',msgId)` and clears the `'approved'` record; on
-failure adds `denied` and removes `needsReview`/`approved`/`scored` (all three, same
-reasoning as above), notification `'Denied (sheet update failed: ' + err.message +
-')'`. **One navigation difference from `handleApprove`, not cosmetic:** `handleDeny`
+`setActionedMessage_(threadId,'denied',msgId)` and clears the `'approved'` record,
+notification exactly `'Bonus Denied'`; on failure adds `denied` and removes
+`needsReview`/`approved`/`scored` (all three, same reasoning as above), notification
+`'Denied (sheet update failed: ' + err.message + ')'`. **One navigation difference
+from `handleApprove`, not cosmetic:** `handleDeny`
 is only ever reached via the Confirm button on the pushed deny-confirmation card
 (§7.9), so its success response is
 `setNavigation(CardService.newNavigation().popCard().updateCard(card))` — it must pop
