@@ -45,8 +45,10 @@ The `rally` parent label is also created so scorers can click it to see every su
 |------|---------|
 | `code.js` | Main script — `setup()`, `processEmails()`, spreadsheet logic, email validation |
 | `Sidebar.gs` | Gmail Add-on sidebar — per-message Approve / Deny / Revert controls |
+| `utility.js` | Manually-run helper(s) for testing — see [Utility scripts](#utility-scripts) |
 | `appsscript.json` | Apps Script manifest with OAuth scopes and add-on registration |
 | `test/` | Unit tests (Node's built-in test runner) against mocked Gmail/Sheets services - see [Testing](#testing) |
+| `LICENSE` | GNU GPL v3.0 or later — see [License](#license) |
 
 ---
 
@@ -83,14 +85,34 @@ The sender email on every submission is validated against this sheet.
 
 ### Bonus Master
 
-A tab named **`Bonus Master`** (configurable). Column A lists every bonus ID, one per row (row 1 = header):
+A tab named **`Bonus Master`** (configurable). Column A lists every bonus ID, column B its point value (`POINTS`), one per row (row 1 = header):
 
-| Bonus ID |
-|----------|
-| ABCD     |
-| WXYZ     |
+| Bonus ID | POINTS |
+|----------|--------|
+| ABCD     | 100    |
+| WXYZ     | 50     |
 
-Rider score sheets reference this tab with cell formulas (`='Bonus Master'!A2` etc.) so any updates to Bonus Master propagate automatically.
+Rider score sheets reference this tab with cell formulas (`='Bonus Master'!A2` etc.) so any updates to Bonus Master propagate automatically. `POINTS` is read by [Master Scoring](#master-scoring) — a blank or non-numeric value there just counts as 0, logged as a warning only when it's non-blank but not a number.
+
+**Combination bonuses go here too** — see [Combination bonuses](#combination-bonuses) below.
+
+### Master Scoring
+
+A tab named **`Master Scoring`** (configurable via `sheet_master_scoring`), created by `setup()` **after** rider score sheets (so its formulas reference sheets that already exist) and positioned **2nd from the left, right after [Leader Board](#leader-board)** — `setup()` explicitly moves it there once both exist, since Leader Board must be leftmost but can't be created until Master Scoring already exists. This only happens the first time either sheet is created; if you drag either tab elsewhere afterward, a later `setup()` run won't move it back. A grid: one row per bonus (starting at row 5), one column per rider (starting at column C):
+
+| | A | B | C (1st rider) | D (2nd rider) |
+|---|---|---|---|---|
+| 1 | | Name | `=VLOOKUP(C2,'Rider Master'!$A$2:$B$…,2)` | … |
+| 2 | | Number | *(cell reference to Rider Master)* | … |
+| 3 | | Score | `=SUMIF(C5:C,"X",$B5:$B)` | … |
+| 4 | Bonus | POINTS | | |
+| 5+ | *(ref to Bonus Master)* | *(ref to Bonus Master)* | *(ref to that rider's own Approved column)* | … |
+
+Every formula is written directly by `setup()`, one per cell — not something you fill in by hand. Requires **Bonus Master** to already exist (`setup()` logs an error for this step and skips it otherwise, but still creates labels, rider sheets, and the trigger); tolerates Rider Master being missing/empty (nothing created, no error).
+
+`Score`'s range starts at row 5, not row 1 — a true whole-column range (`C:C`) would include row 3, the `Score` formula's own cell, which Sheets rejects as a circular reference even though the criteria could never actually match it.
+
+**Re-running `setup()` grows this sheet** as your roster and bonus list grow: a new rider gets a new column (backfilled for every existing bonus row), a new bonus gets a new row (backfilled for every existing rider column). Existing cells are never rewritten.
 
 ### Rider score sheets
 
@@ -103,6 +125,23 @@ Default column layout (all configurable):
 | Bonus ID | Submitted | Submit Time | Approved | Approve Time | Denied | Deny Time |
 
 Bonus IDs in Column A are cell references to Bonus Master — they update automatically if Bonus Master changes.
+
+Submit Time, Approve Time, and Deny Time (columns C, E, G) are formatted as **Date + Time** (`M/d/yyyy h:mm:ss am/pm`) at the moment the rider sheet is created, so a timestamp always displays with both — not just a date. This only applies going forward: a rider sheet that already existed before this was added, or a bonus row added to Bonus Master *after* a rider's sheet was created, won't have the format applied automatically — reformat those columns by hand (select the column → Format → Number → Date time) if needed.
+
+### Leader Board
+
+A tab named **`Leader Board`** (configurable via `sheet_leader_board`), created by `setup()` as the **leftmost tab** in the workbook — one row per rider in Rider Master:
+
+| A | B | C | D |
+|---|---|---|---|
+| Rider Number | Name | Score | Finish |
+
+- **Rider Number** is a cell reference to Rider Master (not a copied value).
+- **Name** is a `VLOOKUP` against Rider Master.
+- **Score** is an `HLOOKUP` against [Master Scoring](#master-scoring), which `setup()` now creates automatically (right before Leader Board, specifically so it's already there) — you shouldn't normally hit the "must already exist" case at all any more; it only still applies if Bonus Master is *also* missing, since that cascades into Master Scoring not being created either.
+- **Finish** is the rider's rank by Score, highest first (rank 1 = highest score).
+
+Re-running `setup()` adds a row for any rider newly added to Rider Master since the last run — existing rows are never rewritten. If you rename or restructure Master Scoring after Leader Board already has rows referencing it, those existing formulas keep pointing at the old range; only rows added afterward pick up the new layout.
 
 ---
 
@@ -137,8 +176,9 @@ Create a new tab in your Google Sheet named exactly `Config`. Add the following 
 1. Open your Google Sheet → **Extensions → Apps Script**
 2. Paste `code.js` into `Code.gs`
 3. Click **+** next to Files → New script → name it `Sidebar` → paste `Sidebar.gs`
-4. Project Settings → check **Show "appsscript.json" manifest file in editor** → paste `appsscript.json`
-5. Save all files
+4. *(Optional, for testing)* Click **+** next to Files → New script → name it `Utility` → paste `utility.js` — see [Utility scripts](#utility-scripts)
+5. Project Settings → check **Show "appsscript.json" manifest file in editor** → paste `appsscript.json`
+6. Save all files
 
 ### 4. Run setup()
 
@@ -153,6 +193,9 @@ In the Apps Script editor:
 - Create the bare `rally` parent label and all sub-labels
 - Save the spreadsheet ID to Script Properties (used by the sidebar)
 - Create rider score sheets for every rider in Rider Master
+- Create or grow the [Master Scoring](#master-scoring) sheet (skipped, with a logged error, if `Bonus Master` doesn't exist yet — everything else above/below still runs)
+- Create or update the [Leader Board](#leader-board) sheet (skipped, with a logged error, if `Master Scoring` doesn't exist — which itself only happens if `Bonus Master` was also missing)
+- Position Leader Board leftmost and Master Scoring right after it — only the first time either one is created; a tab you've since moved by hand stays put on later runs
 - Set the time-driven trigger
 
 ### 5. Activate the Gmail sidebar add-on
@@ -219,6 +262,16 @@ Examples:
 
 ---
 
+## Combination bonuses
+
+A **combination bonus** (or "combo") bundles several regular bonuses under one code — for example, a bonus that only counts once a rider has also claimed a specific set of other bonuses. There's nothing special about it as far as this script is concerned: add its code to **Bonus Master** exactly like any other bonus. A rider claims it exactly like a regular bonus too — same `<Rider#> <4-letter code>` subject format, **no photo required** for the combo email itself (the script never checks for photo attachments on any submission, so this is just a note for riders, not a code difference).
+
+**The script does not know a combo is a combo, does not track which bonuses it depends on, and does not check whether those have been scored.** It's up to the scorer to verify a combo's requirements are actually met — by checking the rider's sheet or however you track it — before clicking Approve in the sidebar. There is no automated gate; the sidebar shows the same Approve/Deny buttons it would for any bonus.
+
+What the combo (and its components) are actually worth in points, and totalling that up, happens entirely in your own scoring spreadsheet (Master Scoring/Leader Board) — this script only tracks submit/approve/deny state, for combos exactly as it does for regular bonuses.
+
+---
+
 ## Config sheet reference
 
 All values are editable directly in the Config sheet after setup.
@@ -230,6 +283,8 @@ All values are editable directly in the Config sheet after setup.
 | `spreadsheet_id` | | Written automatically by `setup()` — do not change |
 | `sheet_rider_master` | `Rider Master` | Tab name of the rider roster |
 | `sheet_bonus_master` | `Bonus Master` | Tab with all bonus IDs in column A |
+| `sheet_master_scoring` | `Master Scoring` | Tab name for [Master Scoring](#master-scoring), created automatically |
+| `sheet_leader_board` | `Leader Board` | Tab name for the [Leader Board](#leader-board) |
 | `master_col_rider_number` | `Rider Number` | Column header in Rider Master |
 | `master_col_email` | `Email` | Column header in Rider Master |
 | `header_row` | `1` | Header row number in rider sheets |
@@ -299,24 +354,28 @@ Or from Apps Script:
 
 ## Utility scripts
 
+`utility.js` holds manually-run helpers for testing — not part of the app's normal
+operation, and never called by `setup()`, `processEmails()`, or the sidebar. Add it
+as its own script file per [Installation step 4](#2-install-script-files-in-apps-script)
+so its functions are selectable from the Apps Script editor's function dropdown.
+
 ### Delete all rider sheets
 
-Paste this into Apps Script, run once, then delete:
+`deleteAllRiderSheets()` removes every sheet **except** the ones listed in its
+`keepSheets` array (`Config`, `Rider Master`, `Bonus Master`, `Master Scoring`) —
+i.e. every rider sheet, **and** `Leader Board`. Leader Board is deleted right along
+with the rider sheets, not kept: it's regenerated from scratch the next time
+`setup()` runs, exactly like a missing rider sheet is. Useful between test runs to
+reset scoring data without touching your roster/bonus setup.
 
-```javascript
-function deleteAllRiderSheets() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const keepSheets = ['Config', 'Rider Master', 'Bonus Master', 'Leaderboard', 'Master Scoring'];
-  const sheets = ss.getSheets();
-  for (const sheet of sheets) {
-    if (!keepSheets.includes(sheet.getName())) {
-      ss.deleteSheet(sheet);
-      Logger.log('Deleted: ' + sheet.getName());
-    }
-  }
-  Logger.log('Done.');
-}
-```
+**Before running it, open `utility.js` and confirm `keepSheets` actually matches your
+spreadsheet's non-rider tab names.** It's an exact-string `.includes()` check with no
+confirmation prompt — a tab name that doesn't match (a typo, a rename, an extra
+scoring tab you added later) gets deleted right along with the rider sheets, with no
+way to undo it beyond Google Sheets' version history.
+
+Run it from the Apps Script editor: select `deleteAllRiderSheets` from the function
+dropdown → **Run**.
 
 ---
 
@@ -330,7 +389,10 @@ function deleteAllRiderSheets() {
 | Email tagged `email-error` | Sender address doesn't match Rider Master — check for typos or alias issues |
 | Email tagged `processing-error` | Apps Script → Executions → click the failed run for the full error |
 | Bonus ID not found | Check Column A of the rider's sheet — spacing and capitalisation must match exactly |
+| `must be at least 1, got: "0"` (or similar) when approving/denying | A `col_*` or `header_row` key in the Config sheet is `0` or negative — columns and rows are numbered starting at 1. Fix the value in Config; no need to re-run `setup()` |
 | Rider Master sheet not found | Tab must be named exactly as configured (default: `Rider Master`) |
+| `Cannot create Master Scoring - "Bonus Master" not found` | Create your `Bonus Master` tab (with a `POINTS` column) and re-run `setup()` — everything else `setup()` does still completes even with this error |
+| `Cannot create Leader Board - "Master Scoring" not found` | Only happens if the above also failed — fix `Bonus Master` first, then re-run `setup()`; Master Scoring and Leader Board both get created in that same run |
 | Sidebar not appearing | Deploy → Test deployments → Install |
 | Sidebar shows stale labels | Gmail doesn't always refresh the thread view instantly — the labels are updated on the server; reload the page to see the current state |
 | Auth dialog not appearing | Go to https://myaccount.google.com/connections, remove the connection, then re-run `setup()` |
@@ -338,7 +400,7 @@ function deleteAllRiderSheets() {
 
 ### Viewing logs
 
-Apps Script → **Executions** in the left sidebar → click any run to expand its log. The script logs every action, validation result, and error with a clear message.
+Apps Script → **Executions** in the left sidebar → click any run to expand its log. The script logs every action, validation result, and error with a clear message — this includes sidebar button clicks (Approve/Deny/Revert), not just the time-driven trigger: every guard clause and failure in the sidebar's handlers writes a log line naming the function and the thread/message involved, so a scorer-facing error toast always has a matching entry here to dig into.
 
 ---
 
@@ -350,4 +412,13 @@ Apps Script → **Executions** in the left sidebar → click any run to expand i
 | `gmail.modify` | Read emails, manage labels |
 | `gmail.addons.*` | Gmail sidebar add-on |
 | `script.scriptapp` | Create time-driven trigger in `setup()` |
-| `script.external_request` | External requests from sidebar |
+| `script.external_request` | Reserved for future use — nothing currently calls `UrlFetchApp` |
+| `script.locale` | Required because the manifest sets `useLocaleFromApp: true` |
+
+If you already installed the add-on before `script.locale` was added to `appsscript.json`, Apps Script will prompt for re-authorization the next time you run a function or open the sidebar — accept it once to pick up the new scope. See [Removing and reinstalling the add-on](#removing-and-reinstalling-the-add-on) if it doesn't prompt on its own.
+
+---
+
+## License
+
+GNU General Public License v3.0 or later — see [LICENSE](LICENSE).

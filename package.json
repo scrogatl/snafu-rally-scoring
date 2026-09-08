@@ -1,6 +1,7 @@
 {
   "name": "snafu-rally-scoring",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "description": "Tests for the Apps Script source, run against mocked Gmail/Sheets services (no network, no real Google APIs).",
   "scripts": {
     "test": "node --test"

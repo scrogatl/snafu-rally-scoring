@@ -1,3 +1,21 @@
+/*
+ * snafu-rally-scoring
+ * Copyright (C) 2026 Scott Rogers
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * Rally Scoring - Sidebar.gs
  * Gmail Add-on sidebar. Shows all messages in a thread individually,
@@ -18,6 +36,7 @@ function buildAddOn(e) {
     ss     = SpreadsheetApp.openById(getSpreadsheetId_());
     config = loadConfig(ss);
   } catch (err) {
+    Logger.log('buildAddOn: config error for message ' + messageId + ': ' + (err.stack || err.message));
     return errorCard_('Config error', err.message + ' - make sure setup() has been run.');
   }
 
@@ -78,7 +97,6 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
   messages.forEach(function(message, idx) {
     const subject = message.getSubject();
     const valid   = isValidSubject(subject);
-    const data    = valid ? extractEmailData(message) : null;
     const msgId   = message.getId();
     const label   = 'Message ' + (idx + 1) + (idx === messages.length - 1 ? ' (latest)' : '');
 
@@ -202,6 +220,7 @@ function cancelDeny(e) {
     ss     = SpreadsheetApp.openById(getSpreadsheetId_());
     config = loadConfig(ss);
   } catch (err) {
+    Logger.log('cancelDeny: config error for message ' + msgId + ': ' + err.message);
     return CardService.newActionResponseBuilder()
       .setNavigation(CardService.newNavigation().popCard())
       .build();
@@ -222,14 +241,20 @@ function handleApprove(e) {
   const msgId    = e.parameters.msgId;
   const threadId = e.parameters.threadId;
   const ctx      = loadThreadContext_(msgId);
-  if (!ctx.config) return notify_('Config error - run setup() first.');
-  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+  if (!ctx.config) {
+    Logger.log('handleApprove: config error for thread ' + threadId + ', message ' + msgId);
+    return notify_('Config error - run setup() first.');
+  }
+  if (!ctx.labels) {
+    Logger.log('handleApprove: Gmail labels missing for thread ' + threadId + ', message ' + msgId);
+    return notify_('Gmail labels missing - run setup() first.');
+  }
 
   try {
     // Write approval to sheet using this specific message's data
     updateSpreadsheet(ctx.ss, ctx.config, ctx.data,
-      configInt_(ctx.config, 'col_approved', 4),
-      configInt_(ctx.config, 'col_approved_time', 5),
+      configInt_(ctx.config, 'col_approved', 4, 1),
+      configInt_(ctx.config, 'col_approved_time', 5, 1),
       false);
     ctx.thread.addLabel(ctx.labels.approved);
     ctx.thread.addLabel(ctx.labels.scored);
@@ -240,6 +265,9 @@ function handleApprove(e) {
     // Remember exactly which message was approved so Revert targets the right row
     setActionedMessage_(threadId, 'approved', msgId);
     clearActionedMessage_(threadId, 'denied');
+
+    Logger.log('handleApprove: approved Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus'] +
+      ' (thread ' + threadId + ', message ' + msgId + ')');
 
     // Rebuild and push the updated card so the sidebar reflects the new state immediately
     const messages      = ctx.thread.getMessages();
@@ -252,13 +280,18 @@ function handleApprove(e) {
       .setNavigation(CardService.newNavigation().updateCard(card))
       .build();
   } catch (err) {
+    Logger.log('handleApprove: sheet update failed for thread ' + threadId + ', message ' + msgId +
+      ': ' + (err.stack || err.message));
     try {
       ctx.thread.addLabel(ctx.labels.approved);
       ctx.thread.removeLabel(ctx.labels.needsReview);
       ctx.thread.removeLabel(ctx.labels.denied);
       ctx.thread.removeLabel(ctx.labels.scored);
       ctx.thread.refresh();
-    } catch(_) {}
+    } catch (labelErr) {
+      Logger.log('handleApprove: label cleanup after failed write also failed for thread ' +
+        threadId + ': ' + labelErr.message);
+    }
     return notifyRefresh_('Approved (sheet update failed: ' + err.message + ')');
   }
 }
@@ -267,13 +300,19 @@ function handleDeny(e) {
   const msgId    = e.parameters.msgId;
   const threadId = e.parameters.threadId;
   const ctx      = loadThreadContext_(msgId);
-  if (!ctx.config) return notify_('Config error - run setup() first.');
-  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+  if (!ctx.config) {
+    Logger.log('handleDeny: config error for thread ' + threadId + ', message ' + msgId);
+    return notify_('Config error - run setup() first.');
+  }
+  if (!ctx.labels) {
+    Logger.log('handleDeny: Gmail labels missing for thread ' + threadId + ', message ' + msgId);
+    return notify_('Gmail labels missing - run setup() first.');
+  }
 
   try {
     updateSpreadsheet(ctx.ss, ctx.config, ctx.data,
-      configInt_(ctx.config, 'col_denied', 6),
-      configInt_(ctx.config, 'col_denied_time', 7),
+      configInt_(ctx.config, 'col_denied', 6, 1),
+      configInt_(ctx.config, 'col_denied_time', 7, 1),
       false);
     ctx.thread.addLabel(ctx.labels.denied);
     ctx.thread.removeLabel(ctx.labels.needsReview);
@@ -284,6 +323,9 @@ function handleDeny(e) {
     // Remember exactly which message was denied so Revert targets the right row
     setActionedMessage_(threadId, 'denied', msgId);
     clearActionedMessage_(threadId, 'approved');
+
+    Logger.log('handleDeny: denied Rider ' + ctx.data['rider-number'] + ' - ' + ctx.data['bonus'] +
+      ' (thread ' + threadId + ', message ' + msgId + ')');
 
     // Return to the main scoring card with an updated state and confirmation toast
     const messages = ctx.thread.getMessages();
@@ -296,21 +338,33 @@ function handleDeny(e) {
       .setNavigation(CardService.newNavigation().popCard().updateCard(card))
       .build();
   } catch (err) {
+    Logger.log('handleDeny: sheet update failed for thread ' + threadId + ', message ' + msgId +
+      ': ' + (err.stack || err.message));
     try {
       ctx.thread.addLabel(ctx.labels.denied);
       ctx.thread.removeLabel(ctx.labels.needsReview);
       ctx.thread.removeLabel(ctx.labels.approved);
       ctx.thread.removeLabel(ctx.labels.scored);
       ctx.thread.refresh();
-    } catch(_) {}
+    } catch (labelErr) {
+      Logger.log('handleDeny: label cleanup after failed write also failed for thread ' +
+        threadId + ': ' + labelErr.message);
+    }
     return notifyRefresh_('Denied (sheet update failed: ' + err.message + ')');
   }
 }
 
 function handleRevertApproved(e) {
-  const ctx = loadThreadContext_(e.parameters.firstMsgId);
-  if (!ctx.config) return notify_('Config error - run setup() first.');
-  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+  const firstMsgId = e.parameters.firstMsgId;
+  const ctx = loadThreadContext_(firstMsgId);
+  if (!ctx.config) {
+    Logger.log('handleRevertApproved: config error for message ' + firstMsgId);
+    return notify_('Config error - run setup() first.');
+  }
+  if (!ctx.labels) {
+    Logger.log('handleRevertApproved: Gmail labels missing for message ' + firstMsgId);
+    return notify_('Gmail labels missing - run setup() first.');
+  }
 
   try {
     // Clear approved column and timestamp in sheet - target the message that was
@@ -319,14 +373,17 @@ function handleRevertApproved(e) {
     const data = dataForMsgId_(getActionedMessage_(threadId, 'approved')) ||
       getFirstValidData_(ctx.thread) || ctx.data;
     if (data) updateSpreadsheet(ctx.ss, ctx.config, data,
-      configInt_(ctx.config, 'col_approved', 4),
-      configInt_(ctx.config, 'col_approved_time', 5),
+      configInt_(ctx.config, 'col_approved', 4, 1),
+      configInt_(ctx.config, 'col_approved_time', 5, 1),
       false, null);
     ctx.thread.removeLabel(ctx.labels.approved);
     ctx.thread.removeLabel(ctx.labels.scored);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
     clearActionedMessage_(threadId, 'approved');
+
+    Logger.log('handleRevertApproved: reverted thread ' + threadId +
+      (data ? ' (Rider ' + data['rider-number'] + ' - ' + data['bonus'] + ')' : ' (no matching data found)'));
 
     const messages      = ctx.thread.getMessages();
     const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
@@ -338,14 +395,22 @@ function handleRevertApproved(e) {
       .setNavigation(CardService.newNavigation().updateCard(card))
       .build();
   } catch (err) {
+    Logger.log('handleRevertApproved: failed for message ' + firstMsgId + ': ' + (err.stack || err.message));
     return notify_('Error: ' + err.message);
   }
 }
 
 function handleRevertDenied(e) {
-  const ctx = loadThreadContext_(e.parameters.firstMsgId);
-  if (!ctx.config) return notify_('Config error - run setup() first.');
-  if (!ctx.labels) return notify_('Gmail labels missing - run setup() first.');
+  const firstMsgId = e.parameters.firstMsgId;
+  const ctx = loadThreadContext_(firstMsgId);
+  if (!ctx.config) {
+    Logger.log('handleRevertDenied: config error for message ' + firstMsgId);
+    return notify_('Config error - run setup() first.');
+  }
+  if (!ctx.labels) {
+    Logger.log('handleRevertDenied: Gmail labels missing for message ' + firstMsgId);
+    return notify_('Gmail labels missing - run setup() first.');
+  }
 
   try {
     // Clear denied column and timestamp in sheet - target the message that was
@@ -354,13 +419,16 @@ function handleRevertDenied(e) {
     const data = dataForMsgId_(getActionedMessage_(threadId, 'denied')) ||
       getFirstValidData_(ctx.thread) || ctx.data;
     if (data) updateSpreadsheet(ctx.ss, ctx.config, data,
-      configInt_(ctx.config, 'col_denied', 6),
-      configInt_(ctx.config, 'col_denied_time', 7),
+      configInt_(ctx.config, 'col_denied', 6, 1),
+      configInt_(ctx.config, 'col_denied_time', 7, 1),
       false, null);
     ctx.thread.removeLabel(ctx.labels.denied);
     ctx.thread.addLabel(ctx.labels.needsReview);
     ctx.thread.refresh();
     clearActionedMessage_(threadId, 'denied');
+
+    Logger.log('handleRevertDenied: reverted thread ' + threadId +
+      (data ? ' (Rider ' + data['rider-number'] + ' - ' + data['bonus'] + ')' : ' (no matching data found)'));
 
     const messages      = ctx.thread.getMessages();
     const threadLabels  = ctx.thread.getLabels().map(l => l.getName());
@@ -372,6 +440,7 @@ function handleRevertDenied(e) {
       .setNavigation(CardService.newNavigation().updateCard(card))
       .build();
   } catch (err) {
+    Logger.log('handleRevertDenied: failed for message ' + firstMsgId + ': ' + (err.stack || err.message));
     return notify_('Error: ' + err.message);
   }
 }
@@ -388,14 +457,18 @@ function loadThreadContext_(msgId) {
     message = GmailApp.getMessageById(msgId);
     thread  = message.getThread();
     data    = extractEmailData(message);
-  } catch(_) {}
+  } catch (err) {
+    Logger.log('loadThreadContext_: could not resolve message/thread for id ' + msgId + ': ' + err.message);
+  }
 
   let config = null, ss = null, labels = null;
   try {
     ss     = SpreadsheetApp.openById(getSpreadsheetId_());
     config = loadConfig(ss);
     labels = loadLabels_(config);
-  } catch(_) {}
+  } catch (err) {
+    Logger.log('loadThreadContext_: could not resolve config/labels for message ' + msgId + ': ' + err.message);
+  }
 
   return { message, thread, data, config, ss, labels };
 }

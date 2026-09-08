@@ -1,0 +1,254 @@
+// snafu-rally-scoring
+// Copyright (C) 2026 Scott Rogers
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Last edited: 2026-09-08
+'use strict';
+
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+const { loadApp, MockSpreadsheet } = require('./support/mocks');
+
+function buildRiderMaster(ss, riders) {
+  return ss.addSheet('Rider Master', [['Rider Number', 'Name', 'Email'], ...riders]);
+}
+
+function buildBonusMaster(ss, bonuses) {
+  // bonuses: [[code, points], ...]
+  return ss.addSheet('Bonus Master', [['Bonus ID', 'POINTS'], ...bonuses]);
+}
+
+describe('createMasterScoring_', () => {
+  test('creates the sheet with header labels, one column per rider, one row per bonus', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100'], ['WXYZ', '50']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.ok(scoring, 'Master Scoring should have been created');
+    assert.deepEqual(scoring.getRange(1, 2, 3, 1).getValues(), [['Name'], ['Number'], ['Score']]);
+    assert.deepEqual(scoring.getRange(4, 1, 1, 2).getValues(), [['Bonus', 'POINTS']]);
+  });
+
+  test('writes the exact expected formula for each rider column (Name/Number/Score)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // Rider 1 -> column C, rider 2 -> column D.
+    assert.equal(scoring._rawCell(1, 3), "=VLOOKUP(C2,'Rider Master'!$A$2:$B$3,2)");
+    assert.equal(scoring._rawCell(2, 3), "='Rider Master'!A2");
+    assert.equal(scoring._rawCell(3, 3), '=SUMIF(C5:C,"X",$B5:$B)');
+    assert.equal(scoring._rawCell(1, 4), "=VLOOKUP(D2,'Rider Master'!$A$2:$B$3,2)");
+    assert.equal(scoring._rawCell(2, 4), "='Rider Master'!A3");
+    assert.equal(scoring._rawCell(3, 4), '=SUMIF(D5:D,"X",$B5:$B)');
+
+    // Column A/B resolve the rider number (a plain cell reference).
+    assert.equal(scoring.getRange(2, 3).getValue(), '1');
+    assert.equal(scoring.getRange(2, 4).getValue(), '2');
+  });
+
+  test('regression: Score range must not include row 3 (its own cell) - a true whole-column range causes a real Sheets circular-reference error', () => {
+    // A range like 'D:D' includes D3, the Score formula's own cell - Sheets
+    // flags that as circular even though the SUMIF criteria would never
+    // match D3's own content. Anchoring the range at row 5 (D5:D) keeps the
+    // "grows automatically, never needs revisiting" property of an open-ended
+    // range without including row 3.
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.match(scoring._rawCell(3, 3), /^=SUMIF\(C5:C,"X",\$B5:\$B\)$/);
+    assert.doesNotMatch(scoring._rawCell(3, 3), /\(C:C/, 'must not be a true whole-column range');
+  });
+
+  test('writes the exact expected formula for each bonus row (Bonus/POINTS/Approved-check)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100'], ['WXYZ', '50']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.equal(scoring._rawCell(5, 1), "='Bonus Master'!A2");
+    assert.equal(scoring._rawCell(5, 2), "='Bonus Master'!B2");
+    assert.equal(scoring._rawCell(5, 3), "='1'!D2"); // col_approved defaults to 4 (D), header_row defaults to 1 -> rider sheet row 2
+    assert.equal(scoring._rawCell(6, 1), "='Bonus Master'!A3");
+    assert.equal(scoring._rawCell(6, 2), "='Bonus Master'!B3");
+    assert.equal(scoring._rawCell(6, 3), "='1'!D3");
+  });
+
+  test('honors configured header_row and col_approved for the Approved-check reference', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, { header_row: '2', col_approved: '10' });
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // header_row=2 -> first bonus lands at rider-sheet row (2+1+0)=3; col_approved=10 -> column J.
+    assert.equal(scoring._rawCell(5, 3), "='1'!J3");
+  });
+
+  test('growth: adding a rider and re-running adds exactly one new column, backfilled for existing bonus rows, leaving existing cells untouched', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100'], ['WXYZ', '50']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+    const originalCol3Row1 = scoring._rawCell(1, 3);
+
+    ss.deleteSheet(ss.getSheetByName('Rider Master'));
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    context.createMasterScoring_(ss, {});
+
+    assert.equal(scoring._rawCell(1, 3), originalCol3Row1, 'existing rider column must not be rewritten');
+    assert.equal(scoring.getLastColumn(), 4, 'exactly one new column added');
+    assert.equal(scoring._rawCell(2, 4), "='Rider Master'!A3");
+    // New column backfilled for both existing bonus rows.
+    assert.equal(scoring._rawCell(5, 4), "='2'!D2");
+    assert.equal(scoring._rawCell(6, 4), "='2'!D3");
+  });
+
+  test('growth: adding a bonus and re-running adds exactly one new row, backfilled for existing rider columns, leaving existing cells untouched', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+    const originalRow5Col3 = scoring._rawCell(5, 3);
+
+    ss.deleteSheet(ss.getSheetByName('Bonus Master'));
+    buildBonusMaster(ss, [['ABCD', '100'], ['WXYZ', '50']]);
+    context.createMasterScoring_(ss, {});
+
+    assert.equal(scoring._rawCell(5, 3), originalRow5Col3, 'existing bonus row must not be rewritten');
+    assert.equal(scoring.getLastRow(), 6, 'exactly one new bonus row added');
+    assert.equal(scoring._rawCell(6, 1), "='Bonus Master'!A3");
+    // New row backfilled for both existing rider columns.
+    assert.equal(scoring._rawCell(6, 3), "='1'!D3");
+    assert.equal(scoring._rawCell(6, 4), "='2'!D3");
+  });
+
+  test('re-running with nothing new added is a no-op (idempotent)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    context.createMasterScoring_(ss, {});
+
+    assert.equal(scoring.getLastColumn(), 3);
+    assert.equal(scoring.getLastRow(), 5);
+  });
+
+  test('throws a clear error when Bonus Master is missing', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    // No Bonus Master sheet at all.
+
+    assert.throws(
+      () => context.createMasterScoring_(ss, {}),
+      /Cannot create Master Scoring.*Bonus Master.*not found/
+    );
+    assert.equal(ss.getSheetByName('Master Scoring'), null, 'must not create a half-built sheet');
+  });
+
+  test('does nothing (no throw) when Rider Master is missing', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    assert.doesNotThrow(() => context.createMasterScoring_(ss, {}));
+    assert.equal(ss.getSheetByName('Master Scoring'), null);
+  });
+
+  test('a blank POINTS value defaults to 0 with no warning logged', () => {
+    const { context, logger } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    ss.addSheet('Bonus Master', [['Bonus ID', 'POINTS'], ['ABCD', '']]);
+
+    context.createMasterScoring_(ss, {});
+
+    assert.ok(!logger.logs.some((l) => l.includes('non-numeric')));
+  });
+
+  test('a non-numeric POINTS value logs a warning and still creates the row', () => {
+    const { context, logger } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    ss.addSheet('Bonus Master', [['Bonus ID', 'POINTS'], ['ABCD', 'oops']]);
+
+    context.createMasterScoring_(ss, {});
+
+    assert.ok(logger.logs.some((l) => l.includes('non-numeric') && l.includes('ABCD')));
+    const scoring = ss.getSheetByName('Master Scoring');
+    assert.equal(scoring._rawCell(5, 1), "='Bonus Master'!A2");
+  });
+
+  test('honors configured sheet_rider_master/sheet_bonus_master/sheet_master_scoring names', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    ss.addSheet('Riders', [['Rider Number', 'Name', 'Email'], ['1', 'Jane', 'jane@example.com']]);
+    ss.addSheet('Bonuses', [['Bonus ID', 'POINTS'], ['ABCD', '100']]);
+    const config = {
+      sheet_rider_master: 'Riders',
+      sheet_bonus_master: 'Bonuses',
+      sheet_master_scoring: 'Scoring',
+    };
+
+    context.createMasterScoring_(ss, config);
+
+    const scoring = ss.getSheetByName('Scoring');
+    assert.ok(scoring);
+    assert.equal(scoring._rawCell(2, 3), "='Riders'!A2");
+    assert.equal(scoring._rawCell(5, 1), "='Bonuses'!A2");
+    assert.equal(scoring._rawCell(5, 3), "='1'!D2");
+  });
+
+  test('is appended after existing sheets, not leftmost (unlike Leader Board)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    ss.addSheet('Config', [['key', 'value']]);
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+
+    assert.deepEqual(
+      ss.getSheets().map((s) => s.getName()),
+      ['Config', 'Rider Master', 'Bonus Master', 'Master Scoring']
+    );
+  });
+});

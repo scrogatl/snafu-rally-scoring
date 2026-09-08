@@ -1,3 +1,20 @@
+// snafu-rally-scoring
+// Copyright (C) 2026 Scott Rogers
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Last edited: 2026-09-08
 'use strict';
 
 const vm = require('vm');
@@ -5,9 +22,10 @@ const fs = require('fs');
 const path = require('path');
 
 // ---------------------------------------------------------------------------
-// Minimal in-memory stand-ins for the Apps Script services code.js/Sidebar.gs
-// call into (GmailApp, SpreadsheetApp, PropertiesService, LockService,
-// ScriptApp, CardService, Logger). Nothing here talks to a real Google API.
+// Minimal in-memory stand-ins for the Apps Script services code.js/Sidebar.gs/
+// utility.js call into (GmailApp, SpreadsheetApp, PropertiesService,
+// LockService, ScriptApp, CardService, Logger). Nothing here talks to a real
+// Google API.
 // ---------------------------------------------------------------------------
 
 function colLetterToIndex(letters) {
@@ -61,6 +79,14 @@ class MockRange {
     return this;
   }
   setFontWeight() { return this; }
+  setNumberFormat(format) {
+    for (let r = 0; r < this.numRows; r++) {
+      for (let c = 0; c < this.numCols; c++) this.sheet._setFormat(this.row + r, this.col + c, format);
+    }
+    return this;
+  }
+  // Matches the real API: returns just the top-left cell's format.
+  getNumberFormat() { return this.sheet._rawFormat(this.row, this.col); }
 }
 
 class MockSheet {
@@ -68,6 +94,7 @@ class MockSheet {
     this.spreadsheet = spreadsheet;
     this.name = name;
     this.grid = [];
+    this.formats = [];
     this.frozenRows = 0;
     if (initialRows) initialRows.forEach((row, r) => row.forEach((val, c) => this._setCell(r + 1, c + 1, val)));
   }
@@ -84,6 +111,18 @@ class MockSheet {
     if (c - 1 >= row.length) return '';
     const v = row[c - 1];
     return v === undefined ? '' : v;
+  }
+  _setFormat(r, c, format) {
+    while (this.formats.length < r) this.formats.push([]);
+    const rowArr = this.formats[r - 1];
+    while (rowArr.length < c) rowArr.push('General');
+    rowArr[c - 1] = format;
+  }
+  _rawFormat(r, c) {
+    if (r - 1 >= this.formats.length) return 'General';
+    const row = this.formats[r - 1];
+    if (c - 1 >= row.length) return 'General';
+    return row[c - 1];
   }
   // Resolves the one formula pattern the app actually writes: ='Sheet Name'!A2
   _resolveCell(r, c) {
@@ -148,6 +187,17 @@ class MockSpreadsheet {
   deleteSheet(sheet) {
     this.sheets.delete(sheet.getName());
     this.order = this.order.filter((n) => n !== sheet.getName());
+  }
+  // Real Apps Script has no direct "move this sheet" call - repositioning an
+  // already-created sheet is always this two-step setActiveSheet()/
+  // moveActiveSheet(pos) pattern (pos is 1-based).
+  setActiveSheet(sheet) { this._activeSheetForMove = sheet; }
+  moveActiveSheet(pos) {
+    const sheet = this._activeSheetForMove;
+    if (!sheet) return;
+    const name = sheet.getName();
+    this.order = this.order.filter((n) => n !== name);
+    this.order.splice(pos - 1, 0, name);
   }
   // Test fixture helper - not part of the real Sheets API.
   addSheet(name, rows) {
@@ -420,12 +470,14 @@ const CardService = {
 
 const CODE_JS_PATH = path.join(__dirname, '..', '..', 'code.js');
 const SIDEBAR_GS_PATH = path.join(__dirname, '..', '..', 'Sidebar.gs');
+const UTILITY_JS_PATH = path.join(__dirname, '..', '..', 'utility.js');
 
 /**
- * Builds a fresh mock GAS environment and runs the real code.js/Sidebar.gs
- * source into it unmodified. Returns the vm context (every top-level
- * function in both files is callable as a property on it) plus handles to
- * each mock service for building fixtures and making assertions.
+ * Builds a fresh mock GAS environment and runs the real code.js/Sidebar.gs/
+ * utility.js source into it unmodified. Returns the vm context (every
+ * top-level function across all three files is callable as a property on
+ * it) plus handles to each mock service for building fixtures and making
+ * assertions.
  */
 function loadApp() {
   const gmail = createGmailApp();
@@ -454,6 +506,7 @@ function loadApp() {
 
   vm.runInContext(fs.readFileSync(CODE_JS_PATH, 'utf8'), context, { filename: 'code.js' });
   vm.runInContext(fs.readFileSync(SIDEBAR_GS_PATH, 'utf8'), context, { filename: 'Sidebar.gs' });
+  vm.runInContext(fs.readFileSync(UTILITY_JS_PATH, 'utf8'), context, { filename: 'utility.js' });
 
   return { context, gmail, spreadsheetApp, propertiesService, lockService, scriptApp, logger };
 }
@@ -474,10 +527,21 @@ function registerActiveSpreadsheet(env, ss) {
  */
 function toPlain(obj) { return Object.assign({}, obj); }
 
+/**
+ * Same cross-realm problem as toPlain, but for arrays: Array.prototype.map()/
+ * filter() called inside code loaded via vm.runInContext builds a vm-realm
+ * array, which isn't instanceof the host realm's Array - so it trips
+ * assert.deepStrictEqual's prototype check even when its elements match.
+ * Array.from(), called from the host realm, copies elements into a plain
+ * host-realm array.
+ */
+function toPlainArray(arr) { return Array.from(arr); }
+
 module.exports = {
   loadApp,
   registerActiveSpreadsheet,
   MockSpreadsheet,
   colLetterToIndex,
   toPlain,
+  toPlainArray,
 };

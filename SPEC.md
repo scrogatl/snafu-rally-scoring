@@ -67,13 +67,18 @@ at any time.
 |---|---|
 | `code.js` | Config loading, `setup()`, rider-sheet creation, the `processEmails()` trigger handler and everything it calls, spreadsheet read/write, email validation. Loaded into the Apps Script project as `Code.gs`. |
 | `Sidebar.gs` | The Gmail Add-on: the contextual-trigger entry point, card construction, and every button's click handler. Added as a second script file named `Sidebar`. |
+| `utility.js` | `deleteAllRiderSheets()` — a manually-run, destructive helper for wiping rider sheets (and Leader Board — regenerated data, kept exactly as un-preserved as the rider sheets it's deleted alongside) between test runs. Reads sheet names from Config (falling back to defaults if Config can't be loaded) rather than hardcoding a second copy of them. Not called by `setup()`, `processEmails()`, or the sidebar. Optional third script file, named `Utility`. |
 | `appsscript.json` | Manifest: OAuth scopes, add-on registration, runtime version, time zone. |
+| `LICENSE` | GNU General Public License, version 3 or later — the verbatim, unmodified license text. Every `.js`/`.gs` source file carries a short copyright/license notice referencing it. |
 
 Apps Script concatenates every script file into one global scope at runtime. Any
 top-level `function` declared in `code.js` is directly callable from `Sidebar.gs` and
-vice versa — there is no module system and no imports. **A helper used by both files
-must be defined in exactly one of them** (see §7.3, `loadLabels_`); do not duplicate a
-helper across files, since the two copies can silently drift.
+vice versa (and from `utility.js`, if added) — there is no module system and no
+imports. **A helper used by both files must be defined in exactly one of them** (see
+§7.3, `loadLabels_`); do not duplicate a helper across files, since the two copies can
+silently drift — exactly what happened between `utility.js`'s `deleteAllRiderSheets`
+and the near-identical copy that used to live inline in `README.md`: their
+`keepSheets` arrays disagreed on `Leader Board` vs. `Leaderboard` until reconciled.
 
 ## 4. Data Model (Spreadsheet Structure)
 
@@ -119,12 +124,94 @@ Default name `Bonus Master` (configurable via `sheet_bonus_master`). Column A is
 list of bonus IDs, one per row, row 1 a header (its text is never checked). A bonus ID
 must be a value that can be produced by the submission-format rule in §6 — i.e.
 effectively 4 letters, since that's what a rider can type and what the matching logic
-in §7.5 compares against. Example:
+in §7.5 compares against. **Column B is that bonus's point value ("POINTS")** —
+required for `createMasterScoring_` (§4.3a/7.2b) to compute anything meaningful; read
+by fixed position like column A, never by header text, and not configurable via any
+`col_*` key (Bonus Master's own layout never has been — only rider sheets have
+configurable columns, and even there with the caveat in §4.4). A blank or non-numeric
+POINTS value defaults to `0` in the Score calculation — logged as a warning only when
+the cell is non-blank but not a number, silent when simply blank (the common case
+before an organizer has filled every value in). Example:
 
-| Bonus ID |
-|---|
-| ABCD |
-| WXYZ |
+| Bonus ID | POINTS |
+|---|---|
+| ABCD | 100 |
+| WXYZ | 50 |
+
+**Combination bonuses are just another row here, indistinguishable from a regular
+bonus.** There is no separate sheet, config key, or code path for them — a combo code
+goes in column A exactly like any bonus ID, gets its own row in every rider sheet
+(§4.4), and is submitted/approved/denied through the exact same mechanism. The script
+has no way to know a given code represents a combination of other bonuses, which
+component bonuses it depends on, or whether those have been scored yet — see §11.
+
+### 4.3a Master Scoring sheet
+
+Default name `Master Scoring` (configurable via `sheet_master_scoring`), created and
+grown by `setup()` via `createMasterScoring_` (§7.2b). Two things about *when* and
+*where* this happens are handled by `setup()` itself, not `createMasterScoring_`
+(§7.1 steps 6-9): it's created **after** rider sheets (so its per-rider formulas
+reference sheets that already exist — see §4.4), and it ends up positioned **2nd
+from the left, immediately after Leader Board** (§4.5) — not simply "appended after
+existing sheets" the way `createMasterScoring_`'s own `insertSheet` call would place
+it on its own; `setup()` explicitly repositions it there afterward, since Leader
+Board (which must be leftmost) can't exist yet at the moment Master Scoring itself
+needs to already exist. A two-dimensional grid: bonus rows starting at row 5, one
+column per rider starting at column C. Rows 1–4 are fixed labels, written once at
+creation:
+
+| | A | B | C (1st rider) | D (2nd rider) | … |
+|---|---|---|---|---|---|
+| 1 | | `Name` | `=VLOOKUP(C2,'Rider Master'!$A$2:$B$<riderMasterLastRow>,2)` | … | |
+| 2 | | `Number` | `='<Rider Master>'!A<n>` | … | |
+| 3 | | `Score` | `=SUMIF(C5:C,"X",$B5:$B)` | … | |
+| 4 | `Bonus` | `POINTS` | | | |
+| 5+ | `='<Bonus Master>'!A<n>` | `='<Bonus Master>'!B<n>` | `='<rider sheet>'!<approvedCol><row>` | … | |
+
+Row `5 + i` (0-indexed `i`) corresponds to Bonus Master row `2 + i`. Column `C + j`
+(0-indexed `j`, via `columnToLetter_` — §7.2a) corresponds to the `j`-th rider
+encountered in Rider Master, in row order. A bonus row's per-rider cell (row 5+)
+points at that rider's own sheet, row `configInt_(config, 'header_row', 1, 1) + 1 +
+i` — the same row arithmetic `createRiderSheet_` (§7.2) uses to place bonus `i` there
+in the first place — column `columnToLetter_(configInt_(config, 'col_approved', 4,
+1))`, i.e. whichever column `handleApprove`/`addApprovedCheck` actually *write* to,
+not a hardcoded column.
+
+**Every formula here is a direct, fully-resolved cell reference generated once per
+cell — never `INDIRECT`.** A hand-built version of this sheet (e.g. dragging one
+formula across many rider columns) typically uses `INDIRECT` so the *same* formula
+text works after being copied anywhere; since this script generates each cell's exact
+formula itself, there's no need for that indirection, and direct references avoid
+`INDIRECT`'s volatility (recalculated on every edit, regardless of whether its inputs
+changed).
+
+**`Score` (row 3) uses ranges open-ended at the bottom but anchored at row 5
+(`C5:C`, `$B5:$B`), not a fixed far bound and not a true whole column.** The
+open-ended-at-the-bottom part is exactly the same reasoning as Leader Board's `RANK`
+(§4.5): a range bounded there too (`C5:C1003`, say) would go stale the instant more
+bonus rows are appended below it. The row-5 anchor at the *top* is not optional the
+way `RANK`'s range has no anchor at all — a true whole-column range (`C:C`) includes
+row 3, the `Score` formula's own cell, which Sheets flags as a **circular
+reference** even though the `"X"` criteria could never actually match that cell's
+own content. `$B5:$B` is anchored the same way for the same reason, even though
+column B's own row 3 is blank (not a formula) — keeping both range starts aligned is
+what SUMIF requires (matching criteria/sum range sizes), not a second circular-risk
+avoidance in its own right.
+
+**Growth on re-run mirrors Leader Board's, in both dimensions.** A rider newly added
+to Rider Master gets a new column, appended to the right, backfilled with the
+Approved-check formula for every bonus row that already exists. A bonus newly added
+to Bonus Master gets a new row, appended at the bottom, backfilled with the
+Approved-check formula for every rider column that already exists. Existing cells —
+in either dimension — are never rewritten. (An existing rider column and a new bonus
+row together, or a new rider column and an existing bonus row together, are each
+handled by exactly one of those two backfill passes — never both, and never neither.)
+
+**Prerequisites, matching §4.5's own split:** Bonus Master must already exist — a hard
+`throw`, like `createRiderSheet_`'s own check — since there's nothing to build rows
+from otherwise. Rider Master missing or empty is tolerated (soft skip, no error,
+nothing created), matching `createAllRiderSheets_`/`createLeaderBoard_`'s existing
+tolerance for that same condition.
 
 ### 4.4 Rider score sheets
 
@@ -143,32 +230,96 @@ yet. Column layout, with a header row at `header_row` (default row 1) that is fr
 | F (`col_denied`) | `Denied` | `handleDeny` |
 | G (`col_denied_time`) | `Deny Time` | `handleDeny` |
 
+Columns C, E, and G (Submit/Approve/Deny Time) are additionally given the number
+format `'M/d/yyyy h:mm:ss am/pm'` at sheet-creation time, applied to every data row
+that exists at that point (the same row range the bonus-ID formulas are written
+into). This is deliberate: writing a `Date` via `setValue()` into a cell that still
+has Sheets' default "Automatic" format often displays as date-only depending on the
+column's inherited formatting, not date+time. Setting the format once at creation
+means every future `handleUnprocessedThread`/`handleApprove`/`handleDeny` write
+already lands in a cell that's going to show both. A rider sheet created before this
+was added, or any row added to Bonus Master *after* a rider's sheet already exists
+(§7.2 - such a row never gets a formula on existing rider sheets in the first place),
+won't have this format and would need it applied by hand.
+
 Column A of a rider sheet is **not** a copy of Bonus Master's values — it is written
 as one formula per data row, `='<Bonus Master sheet name>'!A<n>` (single quotes around
 the sheet name, always column A, `n` = the corresponding Bonus Master row), so edits to
 Bonus Master after the fact propagate to every rider sheet automatically. New sheets
 are inserted **after every existing sheet** (`ss.insertSheet(riderNumber,
-ss.getSheets().length)`), so pre-existing tabs (`Leaderboard`, `Master Scoring`, etc.)
+ss.getSheets().length)`), so pre-existing tabs (`Leader Board`, `Master Scoring`, etc.)
 are never disturbed.
 
 **Important, easy-to-miss inconsistency to preserve exactly, not "fix":**
-`createRiderSheet_` writes the 7-column header row and the bonus-ID formulas at
-hardcoded columns 1–7 — `sheet.getRange(headerRow, 1, 1, 7)` for the header and
-`sheet.getRange(headerRow + 1, 1, formulas.length, 1)` for the formulas, both with a
-literal `1` as the column argument, never `configInt_(config, 'col_bonus_id', ...)` or
-any other `col_*` key. Only `header_row` (which *row* the header lands on) is actually
+`createRiderSheet_` writes the 7-column header row, the bonus-ID formulas, and the
+Date+Time number formats at hardcoded columns (1–7 for the header;
+`sheet.getRange(headerRow + 1, 1, formulas.length, 1)` for the formulas; `[3, 5, 7]`
+for the timestamp formats) — never `configInt_(config, 'col_bonus_id', ...)` or any
+other `col_*` key. Only `header_row` (which *row* everything lands on) is actually
 threaded through from config here. The `col_bonus_id`/`col_submitted`/`col_approved`/
 `col_denied` keys (and their `_time` counterparts) are consulted **only** by
 `updateSpreadsheet` (§7.5) when it later reads or writes a specific cell — they have
-no effect on where `createRiderSheet_` places anything. Practical consequence: the
-"seven independently configurable columns" story in §5 is only trustworthy if every
-`col_*` key is left at its default (1/2/3/4/5/6/7, in that order) or the rider sheet's
-actual header row is edited to match by hand — reconfiguring, say, `col_approved` to
-`10` does not move the "Approved" header; it just makes `handleApprove` write `X` into
-column 10 while the sheet still shows "Approved" at column 4. Reproduce this
-disconnect faithfully rather than parameterizing `createRiderSheet_`'s column
-placement to "fix" it — that would be a behavior change, not a match to this
-codebase.
+no effect on where `createRiderSheet_` places anything, headers or formats alike.
+Practical consequence: the "seven independently configurable columns" story in §5 is
+only trustworthy if every `col_*` key is left at its default (1/2/3/4/5/6/7, in that
+order) or the rider sheet's actual header row is edited to match by hand —
+reconfiguring, say, `col_approved` to `10` does not move the "Approved" header or its
+Date+Time formatting; it just makes `handleApprove` write `X` (with a plain,
+unformatted `Date` next to it) into column 10 while the sheet still shows "Approved"
+at column 4. Reproduce this disconnect faithfully rather than parameterizing
+`createRiderSheet_`'s column placement to "fix" it — that would be a behavior change,
+not a match to this codebase.
+
+### 4.5 Leader Board sheet
+
+Default name `Leader Board` (configurable via `sheet_leader_board`), created by
+`setup()` via `createLeaderBoard_` (§7.2a) — one row per rider in Rider Master, header
+row 1, bold, frozen (not configurable via `header_row`; unlike rider score sheets,
+Leader Board's header position is always row 1, matching the same "always row 1"
+assumption Rider Master/Bonus Master already make). Inserted as the
+**leftmost tab** (`ss.insertSheet(name, 0)`) — the one exception to "every sheet this
+script creates is appended after whatever already exists" (§4.4). This only happens
+at creation; re-running `setup()` against an already-existing Leader Board only adds
+rows (§7.2a) and never repositions the tab. Leader Board's own leftmost position is
+never disturbed by anything — it's Master Scoring that gets explicitly repositioned
+*relative to* Leader Board afterward (§4.3a, §7.1 step 9), not the other way around.
+
+| Column | Header text | Formula shape |
+|---|---|---|
+| A | `Rider Number` | `='<Rider Master>'!A<n>` — cell reference, not a copied value |
+| B | `Name` | `=VLOOKUP(A<row>,'<Rider Master>'!$A$2:$B$<riderMasterLastRow>,2)` |
+| C | `Score` | `=HLOOKUP(A<row>,'<Master Scoring>'!$C$2:$<lastColLetter>$3,2)` |
+| D | `Finish` | `=RANK(C<row>,$C:$C,0)` |
+
+`Master Scoring` (§4.3a) is itself created by `setup()` now (via `createMasterScoring_`,
+§7.2b, called before `createLeaderBoard_` specifically so it exists by the time Leader
+Board needs it) — its layout (rider numbers across row 2, scores across row 3,
+starting at column C) is exactly what §4.3a's own generation produces, so the two
+stay in sync by construction. `createLeaderBoard_` still independently requires
+Master Scoring to exist and throws if it doesn't (§7.2a) — in practice this only
+happens if Bonus Master is *also* missing (Master Scoring's own hard prerequisite,
+§4.3a), cascading into Leader Board too; Rider Master missing is tolerated at every
+level (soft skip, nothing created, no error).
+
+**Ranges are computed fresh from each master sheet's actual current size at the
+moment a row is written** — `riderMaster.getLastRow()` for column B's range,
+`masterScoring.getLastColumn()` for column C's — not hardcoded bounds. This is safe
+for B/C specifically because `VLOOKUP`/`HLOOKUP` only need their row's own rider to
+be *somewhere* within the range; a range sized when a row is written stays correct
+for that row forever, even as more rows/columns are added to the master sheets later.
+
+**Column D is the one exception, and deliberately not sized the same way.** `RANK`
+needs to cover every rider row *in Leader Board itself* — a range computed once at
+write time would go stale for already-written rows the instant a later `setup()` run
+appends more rows below them. It uses a whole-column reference (`$C:$C`) instead,
+which needs no maintenance as rows are added — this is what actually makes "existing
+rows are never touched" (§7.2a) true for every column, not just A/B/C.
+
+`RANK(..., 0)` ranks **descending** — the highest score is rank 1. This assumes bonus
+points accumulate and higher is strictly better in this event's scoring, which is the
+obvious default for this codebase's "bonus points" model but is stated explicitly here
+since nothing else in the spec pins down a ranking direction; flip the third argument
+to `1` if an event instead wants ascending (lowest-score-wins) ranking.
 
 ## 5. Configuration Reference
 
@@ -183,7 +334,7 @@ Two lookup helpers, both defined in `code.js`:
 // validateEmailAddress) — there is no shared string-default helper.
 
 // Numeric keys go through this helper everywhere:
-function configInt_(config, key, defaultValue) {
+function configInt_(config, key, defaultValue, minValue) {
   const raw = config[key];
   if (raw === undefined || raw === '') {
     if (defaultValue !== undefined) return defaultValue;
@@ -191,13 +342,32 @@ function configInt_(config, key, defaultValue) {
   }
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) throw new Error('Config key "' + key + '" is not a number: "' + raw + '"');
+  if (minValue !== undefined && parsed < minValue) {
+    throw new Error('Config key "' + key + '" must be at least ' + minValue + ', got: "' + raw + '"');
+  }
   return parsed;
 }
 ```
 
-Rule: a blank or absent numeric key silently falls back to its documented default; a
-*present but non-numeric* value throws immediately with the exact message shape above
-(callers propagate this — they do not catch and re-default it).
+Rule: a blank or absent numeric key silently falls back to its documented default (the
+default itself is never checked against `minValue` — it's a trusted literal in the
+source, not a Config sheet value); a *present but non-numeric* value throws
+immediately with the exact message shape above (callers propagate this — they do not
+catch and re-default it).
+
+**`minValue` (4th, optional argument):** every call site that resolves a value
+ultimately used as a spreadsheet row or column number — `header_row`, `col_bonus_id`,
+`col_submitted`, `col_submitted_time`, `col_approved`, `col_approved_time`,
+`col_denied`, `col_denied_time` — passes `1` here. `trigger_interval_min` (used only
+as a trigger interval, never a range coordinate) does not. Without this check, a
+misconfigured value like `col_approved = "0"` would parse as a valid-looking integer
+and only fail much later, deep inside a `sheet.getRange(...)` call, as Apps Script's
+own opaque `"The starting column of the range is too small"` — which names no Config
+key at all. Catching it here instead throws `'Config key "col_approved" must be at
+least 1, got: "0"'` immediately, at the point the bad value is read, with the specific
+key and value named. This is a real bug class, not hypothetical: it is exactly what
+produces "starting column/row of the range is too small" from `handleApprove` (and
+every other write path) if a `col_*`/`header_row` key is ever set to `0` or negative.
 
 | Key | Default (when blank/absent) | Read by |
 |---|---|---|
@@ -206,6 +376,8 @@ Rule: a blank or absent numeric key silently falls back to its documented defaul
 | `spreadsheet_id` | written by `setup()` | not read by code at runtime (Script Properties is the source of truth — see §7.1) |
 | `sheet_rider_master` | `Rider Master` | `createAllRiderSheets_`, `validateEmailAddress` |
 | `sheet_bonus_master` | `Bonus Master` | `createRiderSheet_` |
+| `sheet_master_scoring` | `Master Scoring` | `createMasterScoring_` (creates/grows it), `createLeaderBoard_` (must exist by the time it runs — see §4.3a/4.5) |
+| `sheet_leader_board` | `Leader Board` | `createLeaderBoard_` |
 | `master_col_rider_number` | `Rider Number` | `createAllRiderSheets_`, `validateEmailAddress` |
 | `master_col_email` | `Email` | `validateEmailAddress` |
 | `header_row` | `1` | `createRiderSheet_` (which row the header/formulas land on), `updateSpreadsheet` (where data rows start) |
@@ -302,14 +474,34 @@ Manually invoked from the Apps Script editor. In order:
    `'Labels: created=' + created + ', skipped=' + skipped'`. A `label_*` key with no
    configured value is logged (`'Config key missing: ' + key`) and skipped — it does
    **not** abort setup.
-6. Call `createAllRiderSheets_` (§7.2).
-7. Delete every existing project trigger whose handler function is
+6. Call `createAllRiderSheets_` (§7.2) — *before* Master Scoring, so its
+   Approved-check formulas reference rider sheets that already exist (not a
+   correctness requirement — a forward reference to a not-yet-existing sheet just
+   shows `#REF!` until the sheet appears — but the intended, documented order).
+7. Record whether Master Scoring and Leader Board (their configured or default
+   names) each already existed, *before* touching either — needed by step 9.
+8. Call `createMasterScoring_` (§7.2b), then `createLeaderBoard_` (§7.2a), each
+   wrapped in its own `try { ... } catch (e) { Logger.log('FATAL: ' + e.message); }`
+   — a thrown error in either must not skip labels/rider sheets/the trigger, so
+   each is caught individually rather than propagating out of `setup()` like step
+   2's Config failure does. Master Scoring is called first specifically so it
+   already exists by the time Leader Board needs it (§4.5) — `createLeaderBoard_`
+   still independently throws if it doesn't.
+9. If either sheet from step 7 didn't already exist: look both up again by name: if
+   both now exist, `ss.setActiveSheet(masterScoringSheet)` then
+   `ss.moveActiveSheet(2)` — the real Apps Script pattern for repositioning an
+   existing sheet (there's no direct "set index" call) — placing Master Scoring at
+   the 2nd position, 1-based, i.e. immediately after Leader Board's own leftmost
+   position (§4.5). Skipped entirely when both sheets already existed before this
+   run, so a tab a human has since moved by hand is never silently undone on a
+   later `setup()` re-run.
+10. Delete every existing project trigger whose handler function is
    `'processEmails'`, then create exactly one new one:
    `ScriptApp.newTrigger('processEmails').timeBased().everyMinutes(intervalMin).create()`,
    where `intervalMin = configInt_(config, 'trigger_interval_min', 10)`. This makes
    `setup()` idempotent with respect to triggers — re-running it never produces
    duplicate triggers.
-8. Log `'Setup complete. Trigger set for every ' + intervalMin + ' minutes.'`.
+11. Log `'Setup complete. Trigger set for every ' + intervalMin + ' minutes.'`.
 
 ### 7.2 Rider sheet creation
 
@@ -336,13 +528,118 @@ function createRiderSheet_(ss, config, riderNumber) {
   // 2. Insert a new sheet named exactly `riderNumber`, appended after every existing
   //    sheet: ss.insertSheet(riderNumber, ss.getSheets().length).
   // 3. Write the 7-column header row (exact text, §4.4 table) at
-  //    configInt_(config, 'header_row', 1), bold, and freeze that many rows.
-  // 4. If Bonus Master has more than 1 row (i.e. at least one bonus), write one
-  //    formula per bonus into column A starting at headerRow + 1:
-  //    "='" + bonusMasterName + "'!A" + (i + 2)   for i = 0 .. numBonuses-1
-  // 5. Auto-resize column 1. Return the created sheet.
+  //    configInt_(config, 'header_row', 1, 1), bold, and freeze that many rows.
+  // 4. Build one formula per Bonus Master row ("='" + bonusMasterName + "'!A" + (i + 2)).
+  //    Write them all in one setFormulas call starting at headerRow + 1, only if the
+  //    array is non-empty (Bonus Master may legitimately have zero data rows).
+  // 5. If that array was non-empty: setNumberFormat('M/d/yyyy h:mm:ss am/pm') on
+  //    columns 3, 5, and 7 (Submit/Approve/Deny Time), same row range as step 4,
+  //    so every future timestamp write already displays as Date+Time.
+  // 6. Auto-resize column 1. Return the created sheet.
 }
 ```
+
+### 7.2a Leader Board creation
+
+```js
+function columnToLetter_(col) {
+  // Converts a 1-based column number to A1-style letters (3 -> 'C', 98 -> 'CT').
+  // The reverse conversion of what formula-resolution needs letters-to-index for;
+  // needed here to build a lookup range's ending column reference from Master
+  // Scoring's actual width. Shared with createMasterScoring_ (§7.2b), which needs
+  // the same conversion for its rider columns and its Approved-column reference -
+  // defined once here, not duplicated.
+}
+```
+
+```js
+function createLeaderBoard_(ss, config) {
+  // 1. Look up Rider Master; missing or <2 rows -> log and return (soft - same
+  //    tolerance createAllRiderSheets_ already has for this exact condition).
+  // 2. Find the rider-number column by header text; not found -> log and return.
+  // 3. Look up Master Scoring (config['sheet_master_scoring'] || 'Master Scoring');
+  //    missing -> throw new Error('Cannot create Leader Board - "' + masterScoringName +
+  //    '" not found. ...') - a hard prerequisite, unlike Rider Master above.
+  // 4. Resolve or create the Leader Board sheet (config['sheet_leader_board'] ||
+  //    'Leader Board'):
+  //      - Doesn't exist: ss.insertSheet(name, 0) - leftmost tab, unlike every
+  //        other sheet this script creates; write the header row (Rider Number,
+  //        Name, Score, Finish) at row 1, bold, frozen.
+  //      - Exists: read column A's resolved values (row 2..lastRow) into a Set of
+  //        rider numbers already present.
+  // 5. riderMasterLastRow = max(riderMaster.getLastRow(), 2)
+  //    masterScoringLastCol = max(masterScoring.getLastColumn(), 3) -> letter via
+  //    columnToLetter_.
+  // 6. For each Rider Master data row, trimmed rider number, skip blank, skip if
+  //    already in the existing-riders set (added to the set immediately after its
+  //    row is written, guarding against a duplicate rider number producing two
+  //    rows): append one row at the next free Leader Board row - see §4.5's table
+  //    for the exact formula shape of each of the four columns. Catches and logs
+  //    any per-row error without stopping the loop (same resilience pattern as
+  //    createAllRiderSheets_).
+  // 7. Log one summary line: 'Leader Board: added=' + added + ', skipped=' + skipped.
+}
+```
+
+Every row this function writes is independent of every other row it has ever
+written in a *previous* call — nothing here ever rewrites a row for a rider who
+already has one. That's what makes "add rows for new riders, leave existing rows
+alone" true across repeated `setup()` runs as the roster grows, and it's also why
+column D's range can't follow the same "sized when written" rule as B/C (§4.5).
+
+### 7.2b Master Scoring creation
+
+```js
+function createMasterScoring_(ss, config) {
+  // 1. Look up Rider Master; missing or <2 rows -> log and return (soft - same
+  //    tolerance createAllRiderSheets_/createLeaderBoard_ already have).
+  // 2. Find the rider-number column by header text; not found -> log and return.
+  // 3. Look up Bonus Master (config['sheet_bonus_master'] || 'Bonus Master');
+  //    missing -> throw new Error('Cannot create Master Scoring - "' + bonusMasterName +
+  //    '" not found. ...') - a hard prerequisite, matching createRiderSheet_'s own
+  //    Bonus Master check. Read its data rows once.
+  // 4. Resolve or create Master Scoring (config['sheet_master_scoring'] || 'Master
+  //    Scoring'), appended after existing sheets - NOT leftmost, unlike Leader
+  //    Board (§4.5's special case, not this sheet's). This function has no
+  //    opinion on final tab position beyond that; setup() (§7.1 step 9)
+  //    repositions it to sit right after Leader Board afterward, once Leader
+  //    Board exists - something this function can't do itself, since it always
+  //    runs before Leader Board does (§7.1 step 8):
+  //      - Doesn't exist: create it; write B1/B2/B3 = 'Name'/'Number'/'Score' and
+  //        A4/B4 = 'Bonus'/'POINTS'.
+  // 5. Scan existing state (both empty if the sheet was just created):
+  //      - Row 2 across columns C.. -> Map of riderNumber -> column index.
+  //      - Column A rows 5..lastRow -> Set of bonus codes already present.
+  // 6. New bonus rows first (column A/B only for now, direct refs to Bonus Master;
+  //    POINTS defaulting to 0, logging a warning only if the cell is present but
+  //    non-numeric - never for simply blank). Track each new row's corresponding
+  //    rider-sheet row (headerRow + 1 + i) for step 7/8.
+  // 7. New rider columns next (rows 1-3: VLOOKUP / direct Rider Master ref / SUMIF
+  //    over a range open-ended at the bottom but anchored at row 5, e.g. 'C5:C' -
+  //    not a true whole column, which would include row 3 itself and trip Sheets'
+  //    circular-reference check), then - for each new column - the Approved-check
+  //    formula for EVERY bonus row that exists by now, old and new. This is why
+  //    new bonus rows are handled first: by the time a new column is backfilled,
+  //    the final bonus row set is already known, so a new column is never
+  //    touched twice.
+  // 8. For each EXISTING rider column (not one just added in step 7): write the
+  //    Approved-check formula only for the newly-added bonus rows from step 6.
+  //    Existing-column/existing-row cells are never written in any step.
+  // 9. Log one summary line: 'Master Scoring: bonus rows added=' + N + ', rider
+  //    columns added=' + M + '.'
+}
+```
+
+The Approved-check formula written in steps 6-8, for rider `riderNumber`'s cell in
+bonus row `row` (`row >= 5`), is always
+`='<riderNumber>'!<approvedColLetter><riderSheetRow>` where `approvedColLetter =
+columnToLetter_(configInt_(config, 'col_approved', 4, 1))` and `riderSheetRow =
+configInt_(config, 'header_row', 1, 1) + 1 + (row - 5)` — computed once per call (not
+per cell) since neither `col_approved` nor `header_row` changes mid-run. §4.3a has
+the full rationale for every deviation from the reference spreadsheet this behavior
+was reverse-engineered from (direct references over `INDIRECT`, `Score`'s
+row-5-anchored-but-open-ended range instead of a fixed far bound, reading the
+*actual* `col_approved` column instead of a hardcoded one).
 
 ### 7.3 `processEmails()` — the trigger handler
 
@@ -397,7 +694,7 @@ function handleUnprocessedThread(ss, config, thread, labels) {
   // if validMessage found:
   //   try:
   //     updateSpreadsheet(ss, config, data,
-  //       configInt_(config,'col_submitted',2), configInt_(config,'col_submitted_time',3),
+  //       configInt_(config,'col_submitted',2,1), configInt_(config,'col_submitted_time',3,1),
   //       /* useEmailTime */ true)
   //     thread.addLabel(needsReview); thread.removeLabel(unprocessed); thread.refresh()
   //   catch (e):
@@ -424,7 +721,23 @@ The single choke point for every write to a rider sheet — called from
 `handleRevertApproved`, and `handleRevertDenied`. No other function ever calls
 `sheet.getRange(...).setValue(...)` on a rider sheet.
 
+Row-lookup is factored into its own helper:
+
 ```js
+function findBonusRow_(sheet, config, bonusCode) {
+  const startRow = configInt_(config, 'header_row', 1, 1) + 1;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return null;
+
+  const bonusCol = configInt_(config, 'col_bonus_id', 1, 1);
+  const values = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
+  const target = bonusCode.trim().toUpperCase();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim().toUpperCase() === target) return startRow + i;
+  }
+  return null;
+}
+
 function updateSpreadsheet(ss, config, data, columnIndex, timeColumnIndex, useEmailTime, value) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);       // up to 30s; throws if it can't acquire in time
@@ -432,31 +745,30 @@ function updateSpreadsheet(ss, config, data, columnIndex, timeColumnIndex, useEm
     let sheet = ss.getSheetByName(data['rider-number']);
     if (!sheet) sheet = createRiderSheet_(ss, config, data['rider-number']);
 
-    const startRow = configInt_(config, 'header_row', 1) + 1;
-    const lastRow = sheet.getLastRow();
-    if (lastRow < startRow) throw new Error('No data rows in sheet ' + data['rider-number']);
+    const startRow = configInt_(config, 'header_row', 1, 1) + 1;
+    if (sheet.getLastRow() < startRow) throw new Error('No data rows in sheet ' + data['rider-number']);
 
-    const bonusCol = configInt_(config, 'col_bonus_id', 1);
-    const values = sheet.getRange(startRow, bonusCol, lastRow - startRow + 1, 1).getValues();
-    for (let i = 0; i < values.length; i++) {
-      if (String(values[i][0]).trim().toUpperCase() === data['bonus'].trim().toUpperCase()) {
-        const row = startRow + i;
-        if (value === null) {
-          sheet.getRange(row, columnIndex).clearContent();
-          sheet.getRange(row, timeColumnIndex).clearContent();
-        } else {
-          sheet.getRange(row, columnIndex).setValue('X');
-          sheet.getRange(row, timeColumnIndex).setValue(useEmailTime ? data.date : new Date());
-        }
-        return;
-      }
+    const row = findBonusRow_(sheet, config, data['bonus']);
+    if (row === null) throw new Error('Bonus ID "' + data['bonus'] + '" not found in sheet ' + data['rider-number']);
+
+    if (value === null) {
+      sheet.getRange(row, columnIndex).clearContent();
+      sheet.getRange(row, timeColumnIndex).clearContent();
+    } else {
+      sheet.getRange(row, columnIndex).setValue('X');
+      sheet.getRange(row, timeColumnIndex).setValue(useEmailTime ? data.date : new Date());
     }
-    throw new Error('Bonus ID "' + data['bonus'] + '" not found in sheet ' + data['rider-number']);
   } finally {
     lock.releaseLock();       // always runs, including on the throw paths above
   }
 }
 ```
+
+Note the two distinct thrown messages are still checked separately, in this order —
+`updateSpreadsheet` itself still re-checks `sheet.getLastRow() < startRow` before
+calling `findBonusRow_`, rather than folding that into `findBonusRow_`'s `null`
+return, purely so **"No data rows in sheet X"** and **"Bonus ID ... not found in
+sheet X"** stay distinguishable error messages.
 
 Contract callers must follow:
 
@@ -510,7 +822,7 @@ function addApprovedCheck(ss, config, thread, labels) {
 
   try {
     updateSpreadsheet(ss, config, data,
-      configInt_(config, 'col_approved', 4), configInt_(config, 'col_approved_time', 5), false);
+      configInt_(config, 'col_approved', 4, 1), configInt_(config, 'col_approved_time', 5, 1), false);
     thread.removeLabel(labels.needsReview);
     thread.addLabel(labels.scored);
     thread.refresh();
@@ -650,7 +962,7 @@ setup() first.'`. If `ctx.labels` is falsy (`loadLabels_` returned `null`), resp
 ```js
 try {
   updateSpreadsheet(ctx.ss, ctx.config, ctx.data,
-    configInt_(ctx.config,'col_approved',4), configInt_(ctx.config,'col_approved_time',5), false);
+    configInt_(ctx.config,'col_approved',4,1), configInt_(ctx.config,'col_approved_time',5,1), false);
   ctx.thread.addLabel(labels.approved);
   ctx.thread.addLabel(labels.scored);
   ctx.thread.removeLabel(labels.needsReview);
@@ -734,7 +1046,7 @@ const data = dataForMsgId_(getActionedMessage_(threadId, 'approved')) // 1. the 
                                                                        // 3. else, firstMsgId's own
                                                                        //    (possibly invalid) data
 if (data) updateSpreadsheet(ctx.ss, ctx.config, data,
-  configInt_(ctx.config,'col_approved',4), configInt_(ctx.config,'col_approved_time',5),
+  configInt_(ctx.config,'col_approved',4,1), configInt_(ctx.config,'col_approved_time',5,1),
   false, /* value */ null);
 ctx.thread.removeLabel(labels.approved);
 ctx.thread.removeLabel(labels.scored);
@@ -779,13 +1091,14 @@ sets `setStateChanged(true)` instead of rebuilding a card.
     "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
     "https://www.googleapis.com/auth/gmail.addons.current.message.action",
     "https://www.googleapis.com/auth/script.scriptapp",
-    "https://www.googleapis.com/auth/script.external_request"
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.locale"
   ],
   "runtimeVersion": "V8",
   "addOns": {
     "common": {
       "name": "Rally Scoring",
-      "logoUrl": "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png",
+      "logoUrl": "https://raw.githubusercontent.com/scrogatl/snafu-rally-scoring/altc/icons/sidebar-icon.png",
       "useLocaleFromApp": true
     },
     "gmail": {
@@ -797,11 +1110,19 @@ sets `setStateChanged(true)` instead of rebuilding a card.
 }
 ```
 
-Request **exactly** this scope set — no more, no less. In particular: do not add
-`script.locale` (nothing in the code needs it, regardless of `useLocaleFromApp`), and
-do not drop `script.external_request` even though nothing currently calls
-`UrlFetchApp` — treat that one as a known, currently-unused scope rather than
-justification to add a network call.
+Request **exactly** this scope set — no more, no less. Two of these are easy to
+mistakenly "clean up," for opposite reasons — don't:
+
+- **`script.locale` is required, not optional, *because* `useLocaleFromApp` is
+  `true`.** An earlier version of this doc claimed the opposite (that nothing needed
+  it "regardless of `useLocaleFromApp`") — that was wrong, corrected after a real
+  deployment failed to authorize without it. `useLocaleFromApp: true` is what
+  actually creates the dependency, not anything in `code.js`/`Sidebar.gs`'s own
+  logic (neither file reads a locale). Drop `useLocaleFromApp` and this scope stops
+  being required — but don't drop just the scope while leaving the manifest flag on.
+- **`script.external_request` stays even though nothing currently calls
+  `UrlFetchApp`** — treat that one as a known, currently-unused scope rather than
+  justification to add a network call.
 
 ## 9. Error-Handling & Logging Philosophy
 
@@ -823,6 +1144,25 @@ justification to add a network call.
 - Configuration and email-registered-address errors are private-only (`Logger.log`);
   user-facing messages (sidebar notifications, card text) are reserved for things a
   scorer using the sidebar can actually act on.
+- **Every `Sidebar.gs` entry point logs on every failure path, not just the ones that
+  write to the sheet.** `handleApprove`/`handleDeny`/`handleRevertApproved`/
+  `handleRevertDenied` each log their config/labels guard clauses and their catch
+  block (with `err.stack` when available);
+  `buildAddOn` and `cancelDeny` log their config-resolution failures; and
+  `loadThreadContext_`'s two internal `try/catch`es — previously silent (`catch (_)
+  {}`) — now each log what failed to resolve and why. The rule: a scorer-visible
+  notification or error card is never the *only* record of a failure — there is
+  always a matching `Logger.log` line in the Executions log with enough context
+  (function name, threadId/msgId) to diagnose it after the fact, without needing the
+  scorer to have copied down the toast text.
+- **`configInt_`'s optional `minValue` argument (§5) turns a whole class of
+  misconfiguration into an immediate, named error** instead of a much-later, opaque
+  one. Any `col_*`/`header_row` key resolves through `configInt_(..., 1)`; if the
+  Config sheet value is `0` or negative, the error is `'Config key "col_approved"
+  must be at least 1, got: "0"'`, thrown at the point the value is read — not Apps
+  Script's own `"The starting column/row of the range is too small"` several calls
+  later inside `sheet.getRange(...)`, which names no Config key and gives no hint
+  that a Config sheet value is the actual cause.
 
 ## 10. Testing Requirements
 
@@ -839,10 +1179,51 @@ these constraints:
   `deepStrictEqual` pitfalls on values the loaded script constructs itself (a `new
   Date()` or a plain object literal built inside the sandboxed script is not
   `instanceof` the host realm's `Date`/`Object` unless those constructors are
-  explicitly passed into the sandbox before the context is created).
+  explicitly passed into the sandbox before the context is created). The same applies
+  to arrays: any `Array.prototype.map()`/`.filter()` result built inside the sandbox
+  is a vm-realm array and fails `assert.deepStrictEqual` against a host-realm array
+  literal even when every element matches — normalize with `Array.from(...)`
+  (host-side) before comparing, the same way a `toPlain(...)` copy is needed for
+  plain objects.
 - The Sheets mock must resolve the one formula pattern the app actually writes
   (`='<Sheet Name>'!A<n>`) so that rider-sheet bonus-ID lookups exercise real,
-  observable behavior rather than being special-cased in test setup.
+  observable behavior rather than being special-cased in test setup. The mock does
+  **not** need to evaluate `VLOOKUP`/`HLOOKUP`/`RANK`/`SUMIF` (§4.3a/4.5/7.2a/7.2b) —
+  those are only ever asserted by exact formula *text*, since real Sheets formula
+  evaluation is out of scope for an in-memory mock; only Leader Board's column A and
+  Master Scoring's row-2 cells (both plain cell references, same pattern as above)
+  get both a formula-text and a resolved-value assertion.
+- Leader Board test coverage specifically (§4.5/7.2a): the header/frozen row and
+  per-rider formula text on first creation; ranges reflecting each master sheet's
+  actual current size (including a Master Scoring wide enough to need a two-letter
+  column, e.g. `CT`); re-running adds rows only for new riders and leaves existing
+  rows' formulas byte-for-byte untouched; the hard throw when Master Scoring is
+  missing; the soft no-op when Rider Master is missing/empty; and — as an
+  **integration-level regression test**, not just the unit-level ones above —
+  `setup()` itself still creates labels, rider sheets, and the trigger when Master
+  Scoring is missing and `createLeaderBoard_` throws (§7.1 step 8's `try`/`catch`).
+- Master Scoring test coverage specifically (§4.3a/7.2b): exact formula text for
+  every cell shape on first creation (Name/Number/Score per rider column, Bonus/
+  POINTS/Approved-check per bonus row); growth in **both** dimensions independently
+  (a new rider column backfilled for existing bonus rows; a new bonus row backfilled
+  for existing rider columns), each an explicit regression test that existing cells
+  stay byte-for-byte untouched; a fully idempotent re-run (nothing added, nothing
+  changes); the hard throw when Bonus Master is missing; the soft no-op when Rider
+  Master is missing/empty; a blank vs. a non-numeric POINTS value (0 either way, but
+  only the latter logs a warning); that `header_row`/`col_approved` are actually
+  threaded through the per-cell rider-sheet reference, not assumed to be their
+  defaults; and — an **explicit regression test**, since a real Sheets circular-
+  reference error is easy to reintroduce without noticing (the mock has no
+  circular-reference detection of its own) — that `Score`'s range is never a true
+  whole column (`C:C`), only anchored-but-open-ended (`C5:C`).
+- The Sheets mock must support `setActiveSheet`/`moveActiveSheet` (§7.1 step 9's
+  repositioning) — the same two-call pattern real Apps Script requires, not a
+  single hypothetical "set index" call, so a reimplementation can't accidentally
+  simplify this into an API real Apps Script doesn't have. Coverage: a fresh
+  `setup()` run ends with Leader Board leftmost and Master Scoring immediately
+  after it; re-running `setup()` after a human has manually moved either tab does
+  **not** silently reposition it back — the repositioning only fires when at least
+  one of the two sheets didn't already exist before that run (§7.1 step 7).
 - No test dependencies beyond the language runtime's built-in test tools (this
   project uses Node's `node:test` + `node:assert/strict` — no third-party test
   framework).
@@ -876,6 +1257,21 @@ State these plainly so a reimplementation doesn't "fix" them into scope-creep:
   overlapping full trigger runs are tolerated because each thread's own label
   transitions make it naturally idempotent (a thread that already lost its
   `unprocessed` label is simply absent from the next run's search results).
+- No special handling for combination bonuses at all — a combo code is just a Bonus
+  Master entry like any other (§4.3). The script cannot tell a combo from a regular
+  bonus, has no notion of which bonuses a combo depends on, and does not verify that
+  those have been scored before a combo can be approved. This is deliberate, not an
+  oversight: verifying a combo's prerequisites is entirely the human approver's
+  responsibility when reviewing the submission in the sidebar, the same way they'd
+  judge any other bonus claim on its merits.
+- No *enforcement* of points, even though the script now *generates* the formulas
+  that compute them (Bonus Master's POINTS column, §4.3; Master Scoring's Score row,
+  §4.3a). The script writes those formulas once and never reads the result back or
+  acts on it — it doesn't know or care what any rider's computed Score is, doesn't
+  gate approval on it, and doesn't rank anything itself beyond Leader Board's own
+  `RANK` formula (§4.5, itself just more generated-and-forgotten spreadsheet text).
+  Whether a bonus (combo or otherwise) is actually worth what its POINTS value says,
+  and what if anything is done with the totals, is entirely up to the organizer.
 
 ## 12. Worked Example
 
@@ -914,3 +1310,22 @@ Master contains `ABCD` and `WXYZ`.
    re-derives its rider/bonus data, clears both the Approved and Approve-Time cells on
    the `ABCD` row specifically, removes `rally/approved`/`rally/scored`, re-adds
    `rally/email-requires-review`, and deletes the stored property.
+
+**Combination bonus, continuing the same event:** suppose Bonus Master also lists
+`ARSN`, a code the organizer treats as a combination bonus requiring `ABCD` and
+`WXYZ` to both be scored first — nothing in Bonus Master itself marks it as such (§4.3).
+
+6. Jane emails `"42 ARSN"`. Exactly like step 1–2 above — format-valid, sender
+   matches — `updateSpreadsheet` writes `X` and a timestamp to rider sheet `42`'s
+   Submitted column on the `ARSN` row. The thread becomes `rally/email-requires-review`,
+   indistinguishable from any other submission — the script has no idea `ARSN` is a
+   combo at all.
+7. The scorer opens the email. The sidebar shows the same **Approve this message** /
+   **Deny this message** pair it would for any bonus. It's up to the scorer to
+   separately check — by looking at rider `42`'s sheet, or however they track it —
+   whether `ABCD` and `WXYZ` have themselves been Approved yet before deciding whether
+   `ARSN` should be too. Nothing in the app enforces or reminds them of this (§11).
+8. What point value, if any, `ARSN` is worth — and whether that requires `ABCD` and
+   `WXYZ`'s own points to also be counted — is entirely up to the organizer's scoring
+   spreadsheet (§11); this script's part ends at recording the Submitted/Approved
+   state of whatever the scorer decides.

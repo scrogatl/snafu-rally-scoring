@@ -1,3 +1,20 @@
+// snafu-rally-scoring
+// Copyright (C) 2026 Scott Rogers
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Last edited: 2026-09-08
 'use strict';
 
 const { test, describe } = require('node:test');
@@ -109,6 +126,29 @@ describe('handleApprove', () => {
     assert.ok(!thread.hasLabel(gmail.labelNamed('rally/scored')), 'scored label should be removed since nothing was actually recorded');
     assert.ok(!thread.hasLabel(gmail.labelNamed('rally/email-requires-review')));
     assert.match(result.notification._text, /sheet update failed/);
+  });
+
+  test('regression: a misconfigured column (e.g. "0") fails with a clear config error, not a raw range exception', () => {
+    // Reproduces a real-world report: col_approved was accidentally set to "0"
+    // in the Config sheet, and handleApprove surfaced Apps Script's opaque
+    // "The starting column of the range is too small" instead of naming the
+    // actual cause. configInt_'s minValue check (code.js) should now catch
+    // this immediately, with the bad key and value named in the message.
+    const env = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    ss.addSheet('Config', configRows({ ...CONFIG, col_approved: '0' }));
+    Object.values(CONFIG)
+      .filter((v) => typeof v === 'string' && v.startsWith('rally/'))
+      .forEach((name) => env.gmail.api.createLabel(name));
+    registerActiveSpreadsheet(env, ss);
+    buildRiderSheet(ss, '42', ['ABCD']);
+    const thread = env.gmail.createThread('t1', [{ subject: '42 ABCD', from: 'jane@example.com' }], ['rally/email-requires-review']);
+    const msgId = thread.getMessages()[0].getId();
+
+    const result = env.context.handleApprove({ parameters: { msgId, threadId: thread.getId() } });
+
+    assert.match(result.notification._text, /col_approved.*must be at least 1/);
+    assert.ok(!/starting column/.test(result.notification._text), 'should not leak the raw Apps Script range error');
   });
 });
 

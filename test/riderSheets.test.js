@@ -1,3 +1,20 @@
+// snafu-rally-scoring
+// Copyright (C) 2026 Scott Rogers
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Last edited: 2026-09-08
 'use strict';
 
 const { test, describe } = require('node:test');
@@ -29,6 +46,24 @@ describe('createRiderSheet_', () => {
     assert.equal(sheet._rawCell(3, 1), "='Bonus Master'!A3");
     // and the formulas resolve to the actual bonus IDs when read
     assert.deepEqual(sheet.getRange(2, 1, 2, 1).getValues(), [['ABCD'], ['WXYZ']]);
+  });
+
+  test('formats Submit/Approve/Deny Time columns as Date+Time, not just Date', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    ss.addSheet('Bonus Master', [['Bonus ID'], ['ABCD'], ['WXYZ']]);
+
+    const sheet = context.createRiderSheet_(ss, { header_row: '1' }, '42');
+
+    // Column C (3) = Submit Time, E (5) = Approve Time, G (7) = Deny Time.
+    for (const col of [3, 5, 7]) {
+      for (const row of [2, 3]) { // one per bonus data row
+        assert.equal(sheet.getRange(row, col).getNumberFormat(), 'M/d/yyyy h:mm:ss am/pm');
+      }
+    }
+    // Untouched columns keep the sheet's default format.
+    assert.equal(sheet.getRange(2, 1).getNumberFormat(), 'General');
+    assert.equal(sheet.getRange(2, 2).getNumberFormat(), 'General');
   });
 
   test('bonus IDs stay in sync when Bonus Master changes after the sheet is created', () => {
@@ -70,6 +105,7 @@ describe('createRiderSheet_', () => {
 
     assert.deepEqual(ss.getSheets().map((s) => s.getName()), ['Config', 'Bonus Master', '42']);
   });
+
 });
 
 describe('createAllRiderSheets_', () => {
