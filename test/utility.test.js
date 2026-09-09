@@ -21,7 +21,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadApp, registerActiveSpreadsheet, MockSpreadsheet } = require('./support/mocks');
 
-const KEEP_SHEETS = ['Config', 'Rider Master', 'Bonus Master'];
+const KEEP_SHEETS = ['Config', 'Rider Master', 'Bonus Master', 'Combo Master'];
 
 describe('deleteAllRiderSheets', () => {
   test('deletes rider sheets and leaves every kept sheet untouched', () => {
@@ -68,6 +68,19 @@ describe('deleteAllRiderSheets', () => {
     assert.equal(ss.getSheetByName('Master Scoring'), null);
     assert.equal(ss.getSheetByName('42'), null);
     KEEP_SHEETS.forEach((name) => assert.ok(ss.getSheetByName(name), name + ' should still exist'));
+  });
+
+  test('keeps Combo Master, unlike Leader Board/Master Scoring - it is organizer-maintained, not regenerable', () => {
+    const env = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    KEEP_SHEETS.forEach((name) => ss.addSheet(name, [['header']]));
+    ss.addSheet('42', [['Bonus ID']]);
+    registerActiveSpreadsheet(env, ss);
+
+    env.context.deleteAllRiderSheets();
+
+    assert.ok(ss.getSheetByName('Combo Master'), 'Combo Master should still exist');
+    assert.equal(ss.getSheetByName('42'), null);
   });
 
   test('does nothing (and does not throw) when there are no rider sheets to delete', () => {

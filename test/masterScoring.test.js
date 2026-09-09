@@ -30,6 +30,12 @@ function buildBonusMaster(ss, bonuses) {
   return ss.addSheet('Bonus Master', [['Bonus ID', 'POINTS'], ...bonuses]);
 }
 
+function buildComboMaster(ss, pairs) {
+  // pairs: [[comboCode, memberCode], ...] - one row per member, so a combo
+  // with N members takes N rows.
+  return ss.addSheet('Combo Master', [['Combo ID', 'Member Bonus ID'], ...pairs]);
+}
+
 describe('createMasterScoring_', () => {
   test('creates the sheet with header labels, one column per rider, one row per bonus', () => {
     const { context } = loadApp();
@@ -355,5 +361,180 @@ describe('createMasterScoring_', () => {
       ss.getSheets().map((s) => s.getName()),
       ['Config', 'Rider Master', 'Bonus Master', 'Master Scoring']
     );
+  });
+});
+
+describe('createMasterScoring_ - combo auto-approval (Combo Master)', () => {
+  test('combo cell is "X" once every member bonus is approved for that rider', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['WXYZ', '20'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD'], ['COMB', 'WXYZ']]);
+    // Rider 1's Approved column (col_approved default = D), rows matching
+    // header_row=1 -> ABCD at rider-sheet row 2, WXYZ at row 3, COMB at row 4.
+    ss.addSheet('1', [
+      ['Bonus ID', 'Submitted', 'Submit Time', 'Approved', 'Approve Time', 'Denied', 'Deny Time'],
+      ['ABCD', '', '', 'X', '', '', ''],
+      ['WXYZ', '', '', '', '', '', ''], // not yet approved
+      ['COMB', '', '', '', '', '', ''],
+    ]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // Master Scoring rows: 5=ABCD, 6=WXYZ, 7=COMB (Bonus Master order).
+    assert.match(scoring._rawCell(7, 3), /^=IF\(OR\(AND\(C5="X",C6="X"\),'1'!D4="X"\),"X",""\)$/);
+  });
+
+  test('combo Master Scoring cell honors col_approved/header_row when computing the direct-approval fallback', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+
+    context.createMasterScoring_(ss, { header_row: '2', col_approved: '10' });
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // header_row=2 -> ABCD at rider-sheet row 3, COMB at row 4; col_approved=10 -> column J.
+    assert.match(scoring._rawCell(6, 3), /^=IF\(OR\(AND\(C5="X"\),'1'!J4="X"\),"X",""\)$/);
+  });
+
+  test('a regular (non-combo) bonus row keeps the plain direct-reference formula, unaffected by Combo Master', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.equal(scoring._rawCell(5, 3), "='1'!D2"); // ABCD's own row - not a combo
+  });
+
+  test('no Combo Master sheet at all -> every row is a plain direct reference (no regression)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10']]);
+    // No Combo Master sheet added.
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.equal(scoring._rawCell(5, 3), "='1'!D2");
+  });
+
+  test('a combo with a single member still produces a valid AND(...) formula', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.match(scoring._rawCell(6, 3), /^=IF\(OR\(AND\(C5="X"\),'1'!D3="X"\),"X",""\)$/);
+  });
+
+  test('a combo with 5 members produces a correctly-anded formula (no fixed member-count limit)', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [
+      ['AAAA', '1'], ['BBBB', '1'], ['CCCC', '1'], ['DDDD', '1'], ['EEEE', '1'], ['COMB', '100'],
+    ]);
+    buildComboMaster(ss, [
+      ['COMB', 'AAAA'], ['COMB', 'BBBB'], ['COMB', 'CCCC'], ['COMB', 'DDDD'], ['COMB', 'EEEE'],
+    ]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.match(
+      scoring._rawCell(10, 3),
+      /^=IF\(OR\(AND\(C5="X",C6="X",C7="X",C8="X",C9="X"\),'1'!D7="X"\),"X",""\)$/
+    );
+  });
+
+  test('combo code referenced by Combo Master but missing from Bonus Master logs a warning and falls back to plain reference', () => {
+    const { context, logger } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10']]); // no "COMB" entry
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+
+    assert.doesNotThrow(() => context.createMasterScoring_(ss, {}));
+
+    assert.ok(logger.logs.some((l) => l.includes('"COMB"') && l.includes('not a Bonus Master entry')));
+    const scoring = ss.getSheetByName('Master Scoring');
+    // Only ABCD got a row - COMB was never a real Bonus Master entry.
+    assert.equal(scoring.getLastRow(), 5);
+  });
+
+  test('member code referenced by Combo Master but missing from Bonus Master logs a warning and the combo falls back to plain reference', () => {
+    const { context, logger } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['COMB', '100']]); // no "ABCD" entry - the member is missing
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+
+    assert.doesNotThrow(() => context.createMasterScoring_(ss, {}));
+
+    assert.ok(logger.logs.some((l) =>
+      l.includes('"COMB"') && l.includes('"ABCD"') && l.includes('not a Bonus Master entry')));
+    const scoring = ss.getSheetByName('Master Scoring');
+    // Falls back to a plain direct reference, same as a regular bonus row.
+    assert.equal(scoring._rawCell(5, 3), "='1'!D2");
+  });
+
+  test('growth: a new rider column added after the combo already exists gets the full combo formula', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    ss.deleteSheet(ss.getSheetByName('Rider Master'));
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    context.createMasterScoring_(ss, {});
+
+    assert.match(scoring._rawCell(6, 4), /^=IF\(OR\(AND\(D5="X"\),'2'!D3="X"\),"X",""\)$/);
+  });
+
+  test('growth: a new bonus row that is itself a combo (added on a later run) gets the combo formula for existing rider columns', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10']]);
+    context.createMasterScoring_(ss, {}); // no combo yet
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    ss.deleteSheet(ss.getSheetByName('Bonus Master'));
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+    context.createMasterScoring_(ss, {});
+
+    assert.match(scoring._rawCell(6, 3), /^=IF\(OR\(AND\(C5="X"\),'1'!D3="X"\),"X",""\)$/);
+  });
+
+  test('regression: re-running with nothing new does not rewrite an already-written combo cell', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '10'], ['COMB', '100']]);
+    buildComboMaster(ss, [['COMB', 'ABCD']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+    const before = scoring._rawCell(6, 3);
+
+    context.createMasterScoring_(ss, {});
+
+    assert.equal(scoring._rawCell(6, 3), before);
   });
 });

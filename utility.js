@@ -19,16 +19,18 @@
 // Last edited: 2026-09-08
 /**
  * Deletes every rider score sheet, Leader Board, AND Master Scoring, leaving
- * only Config/Rider Master/Bonus Master. Leader Board and Master Scoring are
- * deleted along with the rider sheets - not kept - since both are derived/
- * regenerable data exactly like they are: re-running setup() recreates all
- * three from scratch (fresh rows/columns for every current rider and bonus)
- * the same way it recreates any rider sheet that's missing. Reads sheet names
- * from Config where available (so it stays in sync with your actual sheet_*
- * settings instead of a second hardcoded copy of them), falling back to the
- * documented defaults if Config can't be loaded (e.g. it doesn't exist, or is
- * missing some keys) - this utility should still work even before Config is
- * fully set up.
+ * only Config/Rider Master/Bonus Master/Combo Master. Leader Board and Master
+ * Scoring are deleted along with the rider sheets - not kept - since both are
+ * derived/regenerable data exactly like they are: re-running setup() recreates
+ * all three from scratch (fresh rows/columns for every current rider and
+ * bonus) the same way it recreates any rider sheet that's missing. Combo
+ * Master (like Rider/Bonus Master) is organizer-maintained and never written
+ * by this script, so it's kept, not deleted - even though it's optional and
+ * may not exist in every spreadsheet. Reads sheet names from Config where
+ * available (so it stays in sync with your actual sheet_* settings instead of
+ * a second hardcoded copy of them), falling back to the documented defaults
+ * if Config can't be loaded (e.g. it doesn't exist, or is missing some keys)
+ * - this utility should still work even before Config is fully set up.
  */
 function deleteAllRiderSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -40,6 +42,7 @@ function deleteAllRiderSheets() {
     'Config',
     config['sheet_rider_master'] || 'Rider Master',
     config['sheet_bonus_master'] || 'Bonus Master',
+    config['sheet_combo_master'] || 'Combo Master',
   ];
 
   const sheets = ss.getSheets();

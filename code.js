@@ -281,10 +281,42 @@ function columnToLetter_(col) {
  * Each bonus's own row: columns A/B are direct cell references to Bonus
  * Master (id, POINTS - defaulting to 0 with a logged warning if present but
  * non-numeric, silently 0 if simply blank). Each rider's cell in that row is
- * a direct reference to that rider's own sheet's Approved column - whichever
- * column configInt_ resolves col_approved to, not hardcoded - at whichever
- * row header_row implies for that bonus's position, mirroring the exact row
- * arithmetic createRiderSheet_ uses to place it there in the first place.
+ * normally a direct reference to that rider's own sheet's Approved column -
+ * whichever column configInt_ resolves col_approved to, not hardcoded - at
+ * whichever row header_row implies for that bonus's position, mirroring the
+ * exact row arithmetic createRiderSheet_ uses to place it there in the first
+ * place.
+ *
+ * EXCEPT for a combination bonus's own row (see the optional "Combo Master"
+ * sheet, config['sheet_combo_master'] || 'Combo Master' - one row per
+ * (combo code, member bonus code) pair, any number of members, read only
+ * here, never created/written by this script, same role as Bonus Master
+ * itself): that row's cell for a rider is
+ * `=IF(OR(AND(<memberCell>="X", ...), <direct rider-sheet reference>="X"), "X", "")`
+ * - "X" if EITHER every member bonus's own Master Scoring cell for that rider
+ * is "X", OR the combo was itself directly approved via its own submission
+ * (the plain direct-reference check, same as any regular bonus row) - the two
+ * paths are additive, not exclusive; a scorer can still directly approve a
+ * combo's own submission exactly as before, independent of its members' status.
+ * A combo's code (and every one of its members) must itself be an ordinary
+ * Bonus Master row - Combo Master only maps codes to each other, it never
+ * substitutes for a Bonus Master entry. A combo/member code that Combo Master
+ * references but Bonus Master doesn't have is logged and skipped (that row
+ * falls back to the plain direct-reference formula, same as if it were never
+ * listed in Combo Master at all) - never a thrown error, since Bonus/Combo
+ * Master data-entry mistakes shouldn't block the rest of this sheet.
+ *
+ * Because existing cells are never rewritten (same rule as everywhere else on
+ * this sheet), a Combo Master mapping only takes effect on cells written
+ * AFTER it's already in place when this function runs - a combo added after
+ * its row/a rider's column already exists in Master Scoring keeps its old
+ * plain formula until that cell is regenerated from scratch (delete the sheet
+ * via utility.js's deleteAllRiderSheets() and re-run setup()). Combos are
+ * expected to be fully set up (in both Bonus Master and Combo Master) before
+ * the first setup() run for this reason - there is no rider-sheet-growth
+ * mechanism to retrofit a bonus/combo row into an already-existing rider
+ * sheet (a longstanding limitation of createRiderSheet_/createAllRiderSheets_
+ * itself, §4.4 - unrelated to Master Scoring, and not changed by this).
  *
  * Throws if Bonus Master doesn't exist (a hard prerequisite, like
  * createRiderSheet_'s own check) - callers (setup()) must catch this so it
@@ -333,10 +365,29 @@ function createMasterScoring_(ss, config) {
   );
   const bonusRows = bonusMaster.getDataRange().getValues();
 
+  // Combo Master is optional - a two-column (combo code, member bonus code)
+  // mapping, one row per member (so any number of members needs no special
+  // casing). Read only, never created/written by this script, same role as
+  // Bonus Master itself. Missing entirely just means "no combos" - not an
+  // error.
+  const comboMasterName = config['sheet_combo_master'] || 'Combo Master';
+  const comboMaster = ss.getSheetByName(comboMasterName);
+  const comboMembersByCode = new Map(); // combo code -> [member bonus code, ...]
+  if (comboMaster) {
+    const comboRows = comboMaster.getDataRange().getValues();
+    for (let i = 1; i < comboRows.length; i++) {
+      const comboCode = String(comboRows[i][0]).trim();
+      const memberCode = String(comboRows[i][1] === undefined ? '' : comboRows[i][1]).trim();
+      if (!comboCode || !memberCode) continue;
+      if (!comboMembersByCode.has(comboCode)) comboMembersByCode.set(comboCode, []);
+      comboMembersByCode.get(comboCode).push(memberCode);
+    }
+  }
+
   const scoringName = config['sheet_master_scoring'] || 'Master Scoring';
   let scoring = ss.getSheetByName(scoringName);
   const existingRiderCols = new Map(); // riderNumber -> column index
-  const existingBonusRows = new Set(); // bonus code
+  const bonusRowByCode = new Map(); // bonus code -> Master Scoring row (existing and newly-added)
 
   if (!scoring) {
     scoring = ss.insertSheet(scoringName, ss.getSheets().length);
@@ -354,7 +405,7 @@ function createMasterScoring_(ss, config) {
     const lastRow = scoring.getLastRow();
     if (lastRow >= 5) {
       scoring.getRange(5, 1, lastRow - 4, 1).getValues()
-        .forEach((row) => { const v = String(row[0]).trim(); if (v) existingBonusRows.add(v); });
+        .forEach((row, idx) => { const v = String(row[0]).trim(); if (v) bonusRowByCode.set(v, 5 + idx); });
     }
   }
 
@@ -370,7 +421,7 @@ function createMasterScoring_(ss, config) {
   const newBonusRows = []; // { row, riderSheetRow }
   for (let i = 1; i < bonusRows.length; i++) {
     const bonusCode = String(bonusRows[i][0]).trim();
-    if (!bonusCode || existingBonusRows.has(bonusCode)) continue;
+    if (!bonusCode || bonusRowByCode.has(bonusCode)) continue;
     const bonusMasterRow = i + 1;
     const pointsRaw = String(bonusRows[i][1] === undefined ? '' : bonusRows[i][1]).trim();
     if (pointsRaw && isNaN(parseFloat(pointsRaw))) {
@@ -383,11 +434,53 @@ function createMasterScoring_(ss, config) {
     ]]);
     const riderSheetRow = headerRow + 1 + (nextBonusRow - 5);
     newBonusRows.push({ row: nextBonusRow, riderSheetRow });
-    existingBonusRows.add(bonusCode);
+    bonusRowByCode.set(bonusCode, nextBonusRow);
     nextBonusRow++;
     bonusRowsAdded++;
   }
   const finalLastBonusRow = nextBonusRow - 1;
+
+  // Resolve Combo Master's code -> row mapping now that bonusRowByCode covers
+  // every bonus row that exists by the end of this run (existing and new) -
+  // a combo added in the same run as its own members still resolves. A combo
+  // or member code Combo Master references but Bonus Master doesn't have is
+  // logged and skipped - that combo row falls back to the plain
+  // direct-reference formula below, same as any ordinary bonus row.
+  const comboMemberRowsByRow = new Map(); // combo's Master Scoring row -> [member row, ...]
+  for (const [comboCode, memberCodes] of comboMembersByCode) {
+    const comboRow = bonusRowByCode.get(comboCode);
+    if (comboRow === undefined) {
+      Logger.log('createMasterScoring_: combo "' + comboCode + '" is not a Bonus Master entry - ' +
+        'skipping its auto-approval formula.');
+      continue;
+    }
+    const memberRows = [];
+    let allFound = true;
+    for (const memberCode of memberCodes) {
+      const memberRow = bonusRowByCode.get(memberCode);
+      if (memberRow === undefined) {
+        Logger.log('createMasterScoring_: combo "' + comboCode + '" references member bonus "' +
+          memberCode + '", which is not a Bonus Master entry - skipping its auto-approval formula.');
+        allFound = false;
+        break;
+      }
+      memberRows.push(memberRow);
+    }
+    if (allFound && memberRows.length) comboMemberRowsByRow.set(comboRow, memberRows);
+  }
+
+  // The Approved-check formula for a given (bonus row, rider) cell: a plain
+  // direct reference to that rider's own Approved column, UNLESS this row is
+  // a combo with resolved members, in which case it's additionally "X" when
+  // every member's own cell (same rider, same column) is "X" - see this
+  // function's docstring for the exact formula shape and rationale.
+  function approvedCellFormula_(row, colLetter, riderNumber, riderSheetRow) {
+    const directRef = '\'' + riderNumber + '\'!' + approvedColLetter + riderSheetRow;
+    const memberRows = comboMemberRowsByRow.get(row);
+    if (!memberRows) return '=' + directRef;
+    const memberConds = memberRows.map((r) => colLetter + r + '="X"').join(',');
+    return '=IF(OR(AND(' + memberConds + '),' + directRef + '="X"),"X","")';
+  }
 
   // New rider columns: rows 1-3, then the Approved-check formula for every
   // bonus row that will exist by the end of this run (existing and new).
@@ -411,7 +504,7 @@ function createMasterScoring_(ss, config) {
       const formulas = [];
       for (let row = 5; row <= finalLastBonusRow; row++) {
         const riderSheetRow = headerRow + 1 + (row - 5);
-        formulas.push(['=\'' + riderNumber + '\'!' + approvedColLetter + riderSheetRow]);
+        formulas.push([approvedCellFormula_(row, colLetter, riderNumber, riderSheetRow)]);
       }
       scoring.getRange(5, nextCol, formulas.length, 1).setFormulas(formulas);
     }
@@ -426,9 +519,10 @@ function createMasterScoring_(ss, config) {
   if (newBonusRows.length) {
     for (const [riderNumber, col] of existingRiderCols) {
       if (newRiderCols.has(col)) continue;
+      const colLetter = columnToLetter_(col);
       for (const { row, riderSheetRow } of newBonusRows) {
         scoring.getRange(row, col, 1, 1).setFormulas([[
-          '=\'' + riderNumber + '\'!' + approvedColLetter + riderSheetRow,
+          approvedCellFormula_(row, colLetter, riderNumber, riderSheetRow),
         ]]);
       }
     }

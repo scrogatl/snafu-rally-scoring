@@ -140,11 +140,15 @@ before an organizer has filled every value in). Example:
 | WXYZ | 50 |
 
 **Combination bonuses are just another row here, indistinguishable from a regular
-bonus.** There is no separate sheet, config key, or code path for them — a combo code
-goes in column A exactly like any bonus ID, gets its own row in every rider sheet
-(§4.4), and is submitted/approved/denied through the exact same mechanism. The script
-has no way to know a given code represents a combination of other bonuses, which
-component bonuses it depends on, or whether those have been scored yet — see §11.
+bonus, as far as Bonus Master/rider sheets are concerned.** A combo code goes in
+column A exactly like any bonus ID, gets its own row in every rider sheet (§4.4), and
+can be submitted/approved/denied through the exact same mechanism as any bonus — a
+rider can still email in for it directly, and a scorer can still approve that
+submission from the sidebar, independent of anything below. What makes a combo code
+special — which other bonus codes it depends on, and automatically crediting it once
+those are all approved — lives entirely in the separate, optional **Combo Master**
+sheet (§4.3b) and Master Scoring's own formula (§4.3a); Bonus Master itself has no
+column, key, or special-case for it.
 
 ### 4.3a Master Scoring sheet
 
@@ -208,6 +212,24 @@ in either dimension — are never rewritten. (An existing rider column and a new
 row together, or a new rider column and an existing bonus row together, are each
 handled by exactly one of those two backfill passes — never both, and never neither.)
 
+**A combo bonus's row (§4.3b) gets a different per-rider formula than the plain
+direct-reference shown in the table above.** For rider column with letter `L`, bonus
+row `row`, whose Combo Master-resolved member rows are `m1, m2, …` (§4.3b, §7.2b):
+
+```
+=IF(OR(AND(L<m1>="X",L<m2>="X",…),'<riderNumber>'!<approvedCol><riderSheetRow>="X"),"X","")
+```
+
+— `"X"` if **either** every member bonus's own cell for that same rider column is
+`"X"`, **or** the combo's own direct-reference check (identical to the plain formula
+every other bonus row gets) is itself `"X"`. The two paths are additive: a scorer can
+still directly approve a combo's own submission from the sidebar exactly as before,
+completely independent of whether its members have been approved. This formula is
+computed once, at the same point in the growth logic a plain bonus row's formula
+would be (new rider column, or new bonus row on an existing rider column) — a combo
+mapping added to Combo Master *after* a given cell already exists does not retroactively
+convert it; see §4.3b for that limitation and its workaround.
+
 **Prerequisites, matching §4.5's own split:** Bonus Master must already exist — a hard
 `throw`, like `createRiderSheet_`'s own check — since there's nothing to build rows
 from otherwise. Rider Master missing or empty is tolerated (soft skip, no error,
@@ -252,6 +274,54 @@ protection object rather than being a no-op the way re-drawing alignment/banding
 existing Master Scoring sheet created before this was added does not get protection
 retroactively — the same creation-time-only limitation as rider sheets' Date+Time
 number format (§4.4).
+
+### 4.3b Combo Master sheet (optional)
+
+Default name `Combo Master` (configurable via `sheet_combo_master`) — **read only** by
+`createMasterScoring_` (§4.3a/7.2b), never created or written by this script, the same
+role Rider/Bonus Master play. Missing entirely is not an error; it just means no combos
+exist for this event. Two columns, **one row per (combo code, member bonus code) pair**
+— any number of members needs no schema change, since a combo with `N` members is
+simply `N` rows sharing the same combo code in column A:
+
+| Combo ID | Member Bonus ID |
+|---|---|
+| COMB | ABCD |
+| COMB | WXYZ |
+
+Row 1 is a header (text never checked, matching Bonus/Rider Master's own convention).
+**Both the combo code and every one of its member codes must independently already be
+an ordinary Bonus Master row** (§4.3) — Combo Master only maps codes to each other, it
+never substitutes for a Bonus Master entry (no separate POINTS value, no separate rider-
+sheet row: the combo still needs its own Bonus Master row for both of those). A combo
+or member code Combo Master references that isn't found in Bonus Master is logged
+(`createMasterScoring_: combo "..." is not a Bonus Master entry - ...` or `... references
+member bonus "..." ...`) and that combo's row simply falls back to the plain
+direct-reference formula, same as if it weren't listed in Combo Master at all — never a
+thrown error, since a Bonus/Combo Master data-entry mistake shouldn't block the rest of
+the sheet.
+
+**Historical note, to avoid confusion with an earlier, fully-removed feature of the
+same name:** an earlier version of this codebase had a *different* "Combo Master"
+concept — a full mirrored sheet that stood in for Bonus Master's own combo rows, paired
+with sidebar-side enforcement blocking approval until every component was scored. That
+was deliberately removed in full (no sheet, no sidebar logic, no code path) in favor of
+combos being fully indistinguishable Bonus Master rows, approved entirely at the
+scorer's own judgment. The Combo Master documented here is a different, later, strictly
+smaller feature: a pure code-to-code mapping consumed only by Master Scoring's own
+formula generation (§4.3a) — it does not reintroduce sidebar gating, does not block
+manual approval of anything, and Bonus Master rows remain exactly as indistinguishable
+as before.
+
+**No rider-sheet growth mechanism exists to retrofit a bonus/combo row into an
+already-existing rider sheet** (§4.4 — a longstanding limitation of
+`createRiderSheet_`/`createAllRiderSheets_`, unrelated to Master Scoring and unchanged
+by this feature). Practical consequence: a combo (and every one of its members) needs
+to already be in Bonus Master (and the combo's mapping already in Combo Master) *before
+the very first* `setup()` run for that rider's sheet to end up with a row for it at all
+— adding a combo mid-event only ever affects rider sheets/Master Scoring columns
+created *after* that point, exactly the same rule that already applies to any regular
+bonus added mid-event.
 
 ### 4.4 Rider score sheets
 
@@ -416,6 +486,7 @@ every other write path) if a `col_*`/`header_row` key is ever set to `0` or nega
 | `spreadsheet_id` | written by `setup()` | not read by code at runtime (Script Properties is the source of truth — see §7.1) |
 | `sheet_rider_master` | `Rider Master` | `createAllRiderSheets_`, `validateEmailAddress` |
 | `sheet_bonus_master` | `Bonus Master` | `createRiderSheet_` |
+| `sheet_combo_master` | `Combo Master` | `createMasterScoring_` (optional — §4.3b) |
 | `sheet_master_scoring` | `Master Scoring` | `createMasterScoring_` (creates/grows it), `createLeaderBoard_` (must exist by the time it runs — see §4.3a/4.5) |
 | `sheet_leader_board` | `Leader Board` | `createLeaderBoard_` |
 | `master_col_rider_number` | `Rider Number` | `createAllRiderSheets_`, `validateEmailAddress` |
@@ -642,7 +713,10 @@ function createMasterScoring_(ss, config) {
   //    missing -> throw new Error('Cannot create Master Scoring - "' + bonusMasterName +
   //    '" not found. ...') - a hard prerequisite, matching createRiderSheet_'s own
   //    Bonus Master check. Read its data rows once.
-  // 4. Resolve or create Master Scoring (config['sheet_master_scoring'] || 'Master
+  // 4. Look up Combo Master (config['sheet_combo_master'] || 'Combo Master') -
+  //    OPTIONAL, missing is not an error. If present, read every (comboCode,
+  //    memberCode) row pair into a Map: comboCode -> [memberCode, ...] (§4.3b).
+  // 5. Resolve or create Master Scoring (config['sheet_master_scoring'] || 'Master
   //    Scoring'), appended after existing sheets - NOT leftmost, unlike Leader
   //    Board (§4.5's special case, not this sheet's). This function has no
   //    opinion on final tab position beyond that; setup() (§7.1 step 9)
@@ -652,44 +726,59 @@ function createMasterScoring_(ss, config) {
   //      - Doesn't exist: create it; write B1/B2/B3 = 'Name'/'Number'/'Score' and
   //        A4/B4 = 'Bonus'/'POINTS'; sheet.protect().setWarningOnly(true)
   //        .setDescription(...) - once, here, never in the "already exists" branch.
-  // 5. Scan existing state (both empty if the sheet was just created):
+  // 6. Scan existing state (both empty if the sheet was just created):
   //      - Row 2 across columns C.. -> Map of riderNumber -> column index.
-  //      - Column A rows 5..lastRow -> Set of bonus codes already present.
-  // 6. New bonus rows first (column A/B only for now, direct refs to Bonus Master;
+  //      - Column A rows 5..lastRow -> Map of bonus code -> Master Scoring row
+  //        (not just a Set of codes - the row number is needed to resolve combo
+  //        member references below).
+  // 7. New bonus rows next (column A/B only for now, direct refs to Bonus Master;
   //    POINTS defaulting to 0, logging a warning only if the cell is present but
   //    non-numeric - never for simply blank). Track each new row's corresponding
-  //    rider-sheet row (headerRow + 1 + i) for step 7/8.
-  // 7. New rider columns next (rows 1-3: VLOOKUP / direct Rider Master ref / SUMIF
+  //    rider-sheet row (headerRow + 1 + i) for step 9/10, and add its code -> row
+  //    to the same Map step 6 built (a combo and its members can all be new in
+  //    the same run and still resolve each other).
+  // 8. Resolve each Combo Master entry from step 4 against the code -> row Map
+  //    from steps 6-7: a combo/member code not found there is logged and that
+  //    combo is skipped entirely (falls back to the plain formula in step 9/10,
+  //    same as an ordinary bonus row) - never a thrown error. Result: a Map of
+  //    combo row -> [member row, ...], only for combos that fully resolved.
+  // 9. New rider columns next (rows 1-3: VLOOKUP / direct Rider Master ref / SUMIF
   //    over a range open-ended at the bottom but anchored at row 5, e.g. 'C5:C' -
   //    not a true whole column, which would include row 3 itself and trip Sheets'
   //    circular-reference check), then - for each new column - the Approved-check
-  //    formula for EVERY bonus row that exists by now, old and new. This is why
-  //    new bonus rows are handled first: by the time a new column is backfilled,
-  //    the final bonus row set is already known, so a new column is never
+  //    formula (or the combo formula from step 8, if this row resolved as one) for
+  //    EVERY bonus row that exists by now, old and new. This is why new bonus rows
+  //    are handled first: by the time a new column is backfilled, the final bonus
+  //    row set (and combo resolution) is already known, so a new column is never
   //    touched twice.
-  // 8. For each EXISTING rider column (not one just added in step 7): write the
-  //    Approved-check formula only for the newly-added bonus rows from step 6.
-  //    Existing-column/existing-row cells are never written in any step.
-  // 9. Reapply formatting over the sheet's full current extent (§4.3a): remove
-  //    any existing banding, then center-align and row-band (LIGHT_GREY) the
-  //    whole used range; rebuild (not append to) the sheet's conditional
-  //    format rule set with a single "whenTextEqualTo('X') -> green
-  //    background" rule scoped to just the data grid (row 5+, column C+).
-  // 10. Log one summary line: 'Master Scoring: bonus rows added=' + N + ', rider
+  // 10. For each EXISTING rider column (not one just added in step 9): write the
+  //     Approved-check formula (or combo formula) only for the newly-added bonus
+  //     rows from step 7. Existing-column/existing-row cells are never written in
+  //     any step - this is also why a Combo Master mapping added after a given
+  //     cell already exists does not retroactively convert it (§4.3b).
+  // 11. Reapply formatting over the sheet's full current extent (§4.3a): remove
+  //     any existing banding, then center-align and row-band (LIGHT_GREY) the
+  //     whole used range; rebuild (not append to) the sheet's conditional
+  //     format rule set with a single "whenTextEqualTo('X') -> green
+  //     background" rule scoped to just the data grid (row 5+, column C+).
+  // 12. Log one summary line: 'Master Scoring: bonus rows added=' + N + ', rider
   //     columns added=' + M + '.'
 }
 ```
 
-The Approved-check formula written in steps 6-8, for rider `riderNumber`'s cell in
-bonus row `row` (`row >= 5`), is always
-`='<riderNumber>'!<approvedColLetter><riderSheetRow>` where `approvedColLetter =
-columnToLetter_(configInt_(config, 'col_approved', 4, 1))` and `riderSheetRow =
-configInt_(config, 'header_row', 1, 1) + 1 + (row - 5)` — computed once per call (not
-per cell) since neither `col_approved` nor `header_row` changes mid-run. §4.3a has
-the full rationale for every deviation from the reference spreadsheet this behavior
-was reverse-engineered from (direct references over `INDIRECT`, `Score`'s
+The Approved-check formula written in steps 9-10, for rider `riderNumber`'s cell in
+bonus row `row` (`row >= 5`), is `='<riderNumber>'!<approvedColLetter><riderSheetRow>`
+where `approvedColLetter = columnToLetter_(configInt_(config, 'col_approved', 4, 1))`
+and `riderSheetRow = configInt_(config, 'header_row', 1, 1) + 1 + (row - 5)` — computed
+once per call (not per cell) since neither `col_approved` nor `header_row` changes
+mid-run — **unless `row` resolved as a combo row in step 8**, in which case it's the
+`IF(OR(AND(...` combo formula from §4.3a instead, built from that same direct-reference
+string plus the member rows' cells in the same rider column. §4.3a has the full
+rationale for every deviation from the reference spreadsheet this behavior was
+reverse-engineered from (direct references over `INDIRECT`, `Score`'s
 row-5-anchored-but-open-ended range instead of a fixed far bound, reading the
-*actual* `col_approved` column instead of a hardcoded one).
+*actual* `col_approved` column instead of a hardcoded one, and the combo formula
+itself).
 
 ### 7.3 `processEmails()` — the trigger handler
 
@@ -1276,6 +1365,21 @@ these constraints:
   **explicit regression test**, since `sheet.protect()` creates a new object on
   every call rather than being idempotent the way alignment/banding are — that a
   growth re-run does not add a second protection to an already-protected sheet.
+- Combo auto-approval test coverage specifically (§4.3b/4.3a/7.2b): the exact
+  `IF(OR(AND(...` formula text for a combo row's cell, with both its member-row
+  conditions and its own direct-reference fallback; a combo with a single member
+  and a combo with several (no fixed-count assumption anywhere in the formula
+  generation); that an ordinary (non-combo) bonus row's formula is completely
+  unaffected when Combo Master exists; that no Combo Master sheet at all produces
+  the exact same plain-reference formulas as before this feature existed (a
+  regression test that adding this feature changed nothing for events that don't
+  use it); a combo code, and separately a member code, that Combo Master
+  references but Bonus Master doesn't have — each logged and each falling back to
+  the plain formula, never a thrown error; growth coverage for both write sites
+  (a new rider column added after the combo already exists; a new bonus row that
+  is itself a combo, added on a later run, backfilled onto existing rider
+  columns); and a re-run-is-idempotent regression test that an already-written
+  combo cell is never rewritten.
 - The Sheets mock must support `Range.setHorizontalAlignment`/`getHorizontalAlignment`,
   `Range.applyRowBanding`/`Sheet.getBandings`/`Banding.remove` (throwing if a new
   banding's range overlaps an existing one on the same sheet, matching real Sheets),
@@ -1325,13 +1429,18 @@ State these plainly so a reimplementation doesn't "fix" them into scope-creep:
   overlapping full trigger runs are tolerated because each thread's own label
   transitions make it naturally idempotent (a thread that already lost its
   `unprocessed` label is simply absent from the next run's search results).
-- No special handling for combination bonuses at all — a combo code is just a Bonus
-  Master entry like any other (§4.3). The script cannot tell a combo from a regular
-  bonus, has no notion of which bonuses a combo depends on, and does not verify that
-  those have been scored before a combo can be approved. This is deliberate, not an
-  oversight: verifying a combo's prerequisites is entirely the human approver's
-  responsibility when reviewing the submission in the sidebar, the same way they'd
-  judge any other bonus claim on its merits.
+- No **sidebar-side** special handling for combination bonuses — a combo code is
+  submitted, approved, and denied through the exact same sidebar mechanism as any
+  bonus (§4.3), and `handleApprove`/`handleDeny`/the sidebar cards have no notion of
+  combos at all. A scorer reviewing a combo's own submission in the sidebar is not
+  shown its dependencies or blocked from approving it regardless of their status —
+  that judgment call remains entirely theirs, unchanged from before combo mapping
+  existed. What *did* change: **Master Scoring** (only) can now compute a combo's own
+  cell automatically once its component bonuses are all approved, via the optional
+  Combo Master sheet (§4.3b) — but this is presentation/scoring math, not a gate on
+  anything a human can click; see §4.3a's combo formula for the actual mechanism.
+  Combo Master itself has no code path outside `createMasterScoring_` — nothing in
+  `processEmails()`, `Sidebar.gs`, or `updateSpreadsheet` reads it, ever.
 - No *enforcement* of points, even though the script now *generates* the formulas
   that compute them (Bonus Master's POINTS column, §4.3; Master Scoring's Score row,
   §4.3a). The script writes those formulas once and never reads the result back or
@@ -1381,19 +1490,26 @@ Master contains `ABCD` and `WXYZ`.
 
 **Combination bonus, continuing the same event:** suppose Bonus Master also lists
 `ARSN`, a code the organizer treats as a combination bonus requiring `ABCD` and
-`WXYZ` to both be scored first — nothing in Bonus Master itself marks it as such (§4.3).
+`WXYZ` to both be approved first — nothing in Bonus Master itself marks it as such
+(§4.3). The organizer additionally lists two rows in the optional Combo Master sheet:
+`ARSN`/`ABCD` and `ARSN`/`WXYZ` (§4.3b).
 
 6. Jane emails `"42 ARSN"`. Exactly like step 1–2 above — format-valid, sender
    matches — `updateSpreadsheet` writes `X` and a timestamp to rider sheet `42`'s
    Submitted column on the `ARSN` row. The thread becomes `rally/email-requires-review`,
-   indistinguishable from any other submission — the script has no idea `ARSN` is a
-   combo at all.
+   indistinguishable from any other submission — `handleUnprocessedThread`/
+   `updateSpreadsheet` have no idea `ARSN` is a combo at all; only
+   `createMasterScoring_` ever reads Combo Master.
 7. The scorer opens the email. The sidebar shows the same **Approve this message** /
-   **Deny this message** pair it would for any bonus. It's up to the scorer to
-   separately check — by looking at rider `42`'s sheet, or however they track it —
-   whether `ABCD` and `WXYZ` have themselves been Approved yet before deciding whether
-   `ARSN` should be too. Nothing in the app enforces or reminds them of this (§11).
-8. What point value, if any, `ARSN` is worth — and whether that requires `ABCD` and
-   `WXYZ`'s own points to also be counted — is entirely up to the organizer's scoring
-   spreadsheet (§11); this script's part ends at recording the Submitted/Approved
-   state of whatever the scorer decides.
+   **Deny this message** pair it would for any bonus — sidebar behavior for `ARSN` is
+   completely unaffected by Combo Master (§11). The scorer can approve it directly
+   here exactly as before, independent of `ABCD`/`WXYZ`'s status, if they judge it
+   warranted.
+8. Separately, in Master Scoring (§4.3a), rider `42`'s `ARSN` row cell is a generated
+   formula — `=IF(OR(AND(<ABCD's cell>="X",<WXYZ's cell>="X"),'42'!D<n>="X"),"X","")`
+   — so once *both* `ABCD` and `WXYZ` show `"X"` for rider `42` in Master Scoring, that
+   cell reads `"X"` too, and rider `42`'s `Score` (§4.3a's `SUMIF`) counts `ARSN`'s
+   `POINTS` automatically — with no scorer action on `ARSN`'s own submission required.
+   If the scorer directly approves `ARSN`'s own submission instead (step 7), the same
+   cell reads `"X"` via that path regardless of `ABCD`/`WXYZ`. Either path (or both) is
+   sufficient; neither is required over the other.
