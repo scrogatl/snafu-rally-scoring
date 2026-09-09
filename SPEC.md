@@ -67,7 +67,7 @@ at any time.
 |---|---|
 | `code.js` | Config loading, `setup()`, rider-sheet creation, the `processEmails()` trigger handler and everything it calls, spreadsheet read/write, email validation. Loaded into the Apps Script project as `Code.gs`. |
 | `Sidebar.gs` | The Gmail Add-on: the contextual-trigger entry point, card construction, and every button's click handler. Added as a second script file named `Sidebar`. |
-| `utility.js` | `deleteAllRiderSheets()` — a manually-run, destructive helper for wiping rider sheets (and Leader Board — regenerated data, kept exactly as un-preserved as the rider sheets it's deleted alongside) between test runs. Reads sheet names from Config (falling back to defaults if Config can't be loaded) rather than hardcoding a second copy of them. Not called by `setup()`, `processEmails()`, or the sidebar. Optional third script file, named `Utility`. |
+| `utility.js` | `deleteAllRiderSheets()` — a manually-run, destructive helper for wiping rider sheets (and Leader Board and Master Scoring — both regenerated data, kept exactly as un-preserved as the rider sheets they're deleted alongside) between test runs. Reads sheet names from Config (falling back to defaults if Config can't be loaded) rather than hardcoding a second copy of them. Not called by `setup()`, `processEmails()`, or the sidebar. Optional third script file, named `Utility`. |
 | `appsscript.json` | Manifest: OAuth scopes, add-on registration, runtime version, time zone. |
 | `LICENSE` | GNU General Public License, version 3 or later — the verbatim, unmodified license text. Every `.js`/`.gs` source file carries a short copyright/license notice referencing it. |
 
@@ -123,8 +123,9 @@ only ever looks up the two configured columns by header name.
 Default name `Bonus Master` (configurable via `sheet_bonus_master`). Column A is a
 list of bonus IDs, one per row, row 1 a header (its text is never checked). A bonus ID
 must be a value that can be produced by the submission-format rule in §6 — i.e.
-effectively 4 letters, since that's what a rider can type and what the matching logic
-in §7.5 compares against. **Column B is that bonus's point value ("POINTS")** —
+either 4 letters or 3 letters + 1 digit, since that's what a rider can type and what
+the matching logic in §7.5 compares against. **Column B is that bonus's point value
+("POINTS")** —
 required for `createMasterScoring_` (§4.3a/7.2b) to compute anything meaningful; read
 by fixed position like column A, never by header text, and not configurable via any
 `col_*` key (Bonus Master's own layout never has been — only rider sheets have
@@ -212,6 +213,45 @@ handled by exactly one of those two backfill passes — never both, and never ne
 from otherwise. Rider Master missing or empty is tolerated (soft skip, no error,
 nothing created), matching `createAllRiderSheets_`/`createLeaderBoard_`'s existing
 tolerance for that same condition.
+
+**Formatting is reapplied over the sheet's full current extent at the end of every
+run** (creation or growth) — not computed incrementally against just the newly-written
+cells:
+
+- **Center alignment** (`Range.setHorizontalAlignment('center')`) is applied to the
+  entire used range (row 1 through the current last row, column A through the current
+  last column) — header labels and data cells alike.
+- **Row banding** (`Range.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true,
+  false)`, i.e. Sheets' "alternating colors") is applied the same way, over the same
+  full extent. Any banding already on the sheet is removed first (`sheet.getBandings()
+  .forEach(b => b.remove())`) — Sheets refuses to apply a new banding whose range
+  overlaps an existing one, so growing the sheet and reapplying without first removing
+  the old (now too-small) banding would throw.
+- **Conditional formatting** — a single rule, `whenTextEqualTo('X').setBackground(
+  '#b7e1cd')` — is scoped to just the data grid (row 5+, column C+), not the header
+  rows or the Bonus/POINTS label columns, since those never contain `"X"`.
+  `sheet.setConditionalFormatRules([...])` **replaces** the sheet's entire rule set each
+  run rather than appending, so re-running `setup()` after growth ends up with exactly
+  one rule (covering the new, larger extent), never a second stale one left over from
+  before the growth.
+
+All three are naturally idempotent (redrawing the same alignment/banding/rule over
+cells that already have it is a no-op), and since they only touch presentation — never
+`getValues()`/`setValues()` — none of them interact with the read-scan-then-append
+growth logic above.
+
+**The sheet is also given warning-only protection at creation time** —
+`sheet.protect().setWarningOnly(true).setDescription(...)` — "Edit with warning" in the
+Sheets UI: anyone can still edit any cell, but is shown a confirmation dialog first.
+Unlike the range-scoped formatting above, this is *sheet-level* protection, which
+automatically covers every future row/column as the sheet grows — no code is needed to
+extend it on later runs, and it is applied exactly once, only in the branch where the
+sheet is freshly created (the `else` branch, growing an already-existing sheet, never
+calls `protect()` again — doing so on every run would stack a second, redundant
+protection object rather than being a no-op the way re-drawing alignment/banding is). An
+existing Master Scoring sheet created before this was added does not get protection
+retroactively — the same creation-time-only limitation as rider sheets' Date+Time
+number format (§4.4).
 
 ### 4.4 Rider score sheets
 
@@ -414,11 +454,11 @@ exactly (both operate on `subject.trim()`):
 ```js
 // Format check (does this look like a submission at all?)
 function isValidSubject(subject) {
-  return /^\d+\s*[A-Za-z]{4}$/.test(subject.trim());
+  return /^\d+\s*(?:[A-Za-z]{4}|[A-Za-z]{3}\d)$/.test(subject.trim());
 }
 
 // Format check + extraction, in one step
-const match = subject.trim().match(/^(\d+)\s*([A-Za-z]{4})$/);
+const match = subject.trim().match(/^(\d+)\s*([A-Za-z]{4}|[A-Za-z]{3}\d)$/);
 // match[1] -> rider number (kept as a string, digits only)
 // match[2] -> bonus code, upper-cased before use
 ```
@@ -430,9 +470,13 @@ regex alone is easy to get subtly wrong):
   (no range check, no leading-zero handling beyond what `\d+` naturally allows).
 - Zero or more whitespace characters are allowed between the number and the code
   (`\s*`, so `"42ABCD"` and `"42     ABCD"` are both valid).
-- The bonus code is **exactly** 4 alphabetic characters, letters only — no digits,
-  hyphens, or underscores anywhere in it. It is upper-cased before being compared or
-  stored, so `"abcd"`, `"AbCd"`, and `"ABCD"` are the same bonus.
+- The bonus code is **either** exactly 4 alphabetic characters (letters only — no
+  digits, hyphens, or underscores), **or** exactly 3 alphabetic characters followed by
+  exactly 1 digit (e.g. `"ABC1"`). No other letter/digit combination is valid — not 4
+  letters plus a digit (`"ABCD1"`), not 3 letters plus 2 digits (`"ABC12"`), not fewer
+  than 3 letters before a digit (`"AB1"`). The letters are upper-cased before being
+  compared or stored, so `"abcd"`, `"AbCd"`, and `"ABCD"` are the same bonus, and
+  `"abc1"`/`"ABC1"` are the same bonus.
 - Nothing may precede the rider number or follow the bonus code — the regex is
   fully anchored (`^...$`) against the trimmed string, so trailing text
   (`"42 ABCD extra"`) is invalid.
@@ -606,7 +650,8 @@ function createMasterScoring_(ss, config) {
   //    Board exists - something this function can't do itself, since it always
   //    runs before Leader Board does (§7.1 step 8):
   //      - Doesn't exist: create it; write B1/B2/B3 = 'Name'/'Number'/'Score' and
-  //        A4/B4 = 'Bonus'/'POINTS'.
+  //        A4/B4 = 'Bonus'/'POINTS'; sheet.protect().setWarningOnly(true)
+  //        .setDescription(...) - once, here, never in the "already exists" branch.
   // 5. Scan existing state (both empty if the sheet was just created):
   //      - Row 2 across columns C.. -> Map of riderNumber -> column index.
   //      - Column A rows 5..lastRow -> Set of bonus codes already present.
@@ -625,8 +670,13 @@ function createMasterScoring_(ss, config) {
   // 8. For each EXISTING rider column (not one just added in step 7): write the
   //    Approved-check formula only for the newly-added bonus rows from step 6.
   //    Existing-column/existing-row cells are never written in any step.
-  // 9. Log one summary line: 'Master Scoring: bonus rows added=' + N + ', rider
-  //    columns added=' + M + '.'
+  // 9. Reapply formatting over the sheet's full current extent (§4.3a): remove
+  //    any existing banding, then center-align and row-band (LIGHT_GREY) the
+  //    whole used range; rebuild (not append to) the sheet's conditional
+  //    format rule set with a single "whenTextEqualTo('X') -> green
+  //    background" rule scoped to just the data grid (row 5+, column C+).
+  // 10. Log one summary line: 'Master Scoring: bonus rows added=' + N + ', rider
+  //     columns added=' + M + '.'
 }
 ```
 
@@ -852,7 +902,7 @@ function buildAddOn(e) {
   // If NO message in the thread has a valid-format subject, show
   //   infoCard_('Not a rally submission', <this message's subject>,
   //     'No message in this thread matches the required format: Rider Number ' +
-  //     'followed by a 4-letter Bonus Code.') and stop.
+  //     'followed by a Bonus Code (4 letters, or 3 letters + 1 digit).') and stop.
   // Otherwise: threadLabels = thread.getLabels().map(name); threadStatus =
   //   getStatus_(threadLabels, config); return buildScoringCard_(messages,
   //   threadStatus, thread.getId(), config, threadLabels, ss).
@@ -900,7 +950,7 @@ Section order, exactly:
 2. **"Error"** section — present **only** if the thread has one of
    `label_format_error` / `label_email_error` / `label_processing_error`. Exactly one
    paragraph, checked in that same priority order, exact text:
-   - format error: `'Subject line does not match the required format: Rider Number followed by a 4-letter Bonus Code (e.g. "42 ABCD"). Ask the rider to resend with the correct subject.'`
+   - format error: `'Subject line does not match the required format: Rider Number followed by a Bonus Code - 4 letters, or 3 letters + 1 digit (e.g. "42 ABCD" or "42 ABC1"). Ask the rider to resend with the correct subject.'`
    - email error: `'The sender email does not match the registered address for this rider number in Rider Master. Verify the rider's registered email or check for a typo.'`
    - processing error: `'A bonus code error occurred while recording this submission - the bonus code could not be matched in the rider sheet. Check the Apps Script Executions log for details.'`
 3. **One section per message**, in thread order, header `'Message ' + (idx+1)`, with
@@ -1098,7 +1148,7 @@ sets `setStateChanged(true)` instead of rebuilding a card.
   "addOns": {
     "common": {
       "name": "Rally Scoring",
-      "logoUrl": "https://raw.githubusercontent.com/scrogatl/snafu-rally-scoring/altc/icons/sidebar-icon.png",
+      "logoUrl": "https://raw.githubusercontent.com/scrogatl/snafu-rally-scoring/main/icons/sidebar-icon.png",
       "useLocaleFromApp": true
     },
     "gmail": {
@@ -1215,7 +1265,25 @@ these constraints:
   defaults; and — an **explicit regression test**, since a real Sheets circular-
   reference error is easy to reintroduce without noticing (the mock has no
   circular-reference detection of its own) — that `Score`'s range is never a true
-  whole column (`C:C`), only anchored-but-open-ended (`C5:C`).
+  whole column (`C:C`), only anchored-but-open-ended (`C5:C`). Also cover the
+  formatting pass (§4.3a): center alignment reaches header cells as well as data
+  cells; row banding covers the full extent and is removed-then-reapplied (not
+  stacked) on a growth re-run, an **explicit regression test** since Sheets throws
+  if a new banding overlaps an existing one; and the conditional-format rule is
+  scoped to row 5+/column C+ only, rebuilt (not appended to) on re-run so growth
+  never leaves a second, stale rule behind. Also cover the sheet's warning-only
+  protection (§4.3a): set at creation time with `getWarningOnly()` true; and — an
+  **explicit regression test**, since `sheet.protect()` creates a new object on
+  every call rather than being idempotent the way alignment/banding are — that a
+  growth re-run does not add a second protection to an already-protected sheet.
+- The Sheets mock must support `Range.setHorizontalAlignment`/`getHorizontalAlignment`,
+  `Range.applyRowBanding`/`Sheet.getBandings`/`Banding.remove` (throwing if a new
+  banding's range overlaps an existing one on the same sheet, matching real Sheets),
+  `SpreadsheetApp.newConditionalFormatRule`/`Sheet.getConditionalFormatRules`/
+  `Sheet.setConditionalFormatRules` (the last **replaces** the sheet's rule set,
+  it does not append), and `Sheet.protect()`/`Protection.setWarningOnly`/
+  `setDescription`/`Sheet.getProtections` — needed for Master Scoring's formatting
+  and protection above.
 - The Sheets mock must support `setActiveSheet`/`moveActiveSheet` (§7.1 step 9's
   repositioning) — the same two-call pattern real Apps Script requires, not a
   single hypothetical "set index" call, so a reimplementation can't accidentally

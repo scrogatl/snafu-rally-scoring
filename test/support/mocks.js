@@ -87,6 +87,57 @@ class MockRange {
   }
   // Matches the real API: returns just the top-left cell's format.
   getNumberFormat() { return this.sheet._rawFormat(this.row, this.col); }
+  setHorizontalAlignment(align) {
+    for (let r = 0; r < this.numRows; r++) {
+      for (let c = 0; c < this.numCols; c++) this.sheet._setAlign(this.row + r, this.col + c, align);
+    }
+    return this;
+  }
+  // Matches the real API: returns just the top-left cell's alignment.
+  getHorizontalAlignment() { return this.sheet._rawAlign(this.row, this.col); }
+  // Real Sheets throws if a new banding's range overlaps an existing one on
+  // the same sheet - callers are expected to remove old bandings (via
+  // getBandings()/.remove()) before reapplying over a grown range, same
+  // idiom this mock uses elsewhere (conditional format rules, etc.).
+  applyRowBanding(theme, showHeader, showFooter) {
+    const overlaps = this.sheet.bandings.some((b) => b._overlaps(this.row, this.col, this.numRows, this.numCols));
+    if (overlaps) throw new Error('This operation could not be performed because the range overlaps an existing banding.');
+    const banding = new MockBanding(this.sheet, this.row, this.col, this.numRows, this.numCols, theme, showHeader, showFooter);
+    this.sheet.bandings.push(banding);
+    return banding;
+  }
+}
+
+class MockBanding {
+  constructor(sheet, row, col, numRows, numCols, theme, showHeader, showFooter) {
+    this.sheet = sheet;
+    this.row = row; this.col = col; this.numRows = numRows; this.numCols = numCols;
+    this.theme = theme; this.showHeader = showHeader; this.showFooter = showFooter;
+  }
+  _overlaps(row, col, numRows, numCols) {
+    const rowsOverlap = row < this.row + this.numRows && row + numRows > this.row;
+    const colsOverlap = col < this.col + this.numCols && col + numCols > this.col;
+    return rowsOverlap && colsOverlap;
+  }
+  remove() { this.sheet.bandings = this.sheet.bandings.filter((b) => b !== this); }
+  getBandingTheme() { return this.theme; }
+}
+
+class MockConditionalFormatRuleBuilder {
+  constructor() { this._condition = null; this._background = null; this._ranges = []; }
+  whenTextEqualTo(text) { this._condition = { type: 'TEXT_EQ', value: text }; return this; }
+  setBackground(color) { this._background = color; return this; }
+  setRanges(ranges) { this._ranges = ranges; return this; }
+  build() { return { condition: this._condition, background: this._background, ranges: this._ranges }; }
+}
+
+class MockProtection {
+  constructor(target) { this.target = target; this._warningOnly = false; this._description = ''; }
+  setWarningOnly(v) { this._warningOnly = v; return this; }
+  getWarningOnly() { return this._warningOnly; }
+  setDescription(d) { this._description = d; return this; }
+  getDescription() { return this._description; }
+  remove() { const i = this.target.protections.indexOf(this); if (i !== -1) this.target.protections.splice(i, 1); }
 }
 
 class MockSheet {
@@ -95,10 +146,20 @@ class MockSheet {
     this.name = name;
     this.grid = [];
     this.formats = [];
+    this.aligns = [];
     this.frozenRows = 0;
+    this.bandings = [];
+    this.conditionalFormatRules = [];
+    this.protections = [];
     if (initialRows) initialRows.forEach((row, r) => row.forEach((val, c) => this._setCell(r + 1, c + 1, val)));
   }
   getName() { return this.name; }
+  protect() {
+    const p = new MockProtection(this);
+    this.protections.push(p);
+    return p;
+  }
+  getProtections() { return this.protections.slice(); }
   _ensure(r, c) {
     while (this.grid.length < r) this.grid.push([]);
     const rowArr = this.grid[r - 1];
@@ -124,6 +185,21 @@ class MockSheet {
     if (c - 1 >= row.length) return 'General';
     return row[c - 1];
   }
+  _setAlign(r, c, align) {
+    while (this.aligns.length < r) this.aligns.push([]);
+    const rowArr = this.aligns[r - 1];
+    while (rowArr.length < c) rowArr.push(null);
+    rowArr[c - 1] = align;
+  }
+  _rawAlign(r, c) {
+    if (r - 1 >= this.aligns.length) return null;
+    const row = this.aligns[r - 1];
+    if (c - 1 >= row.length) return null;
+    return row[c - 1];
+  }
+  getBandings() { return this.bandings.slice(); }
+  getConditionalFormatRules() { return this.conditionalFormatRules.slice(); }
+  setConditionalFormatRules(rules) { this.conditionalFormatRules = rules.slice(); }
   // Resolves the one formula pattern the app actually writes: ='Sheet Name'!A2
   _resolveCell(r, c) {
     const raw = this._rawCell(r, c);
@@ -220,6 +296,12 @@ function createSpreadsheetApp() {
       const ss = stores.get(id);
       if (!ss) throw new Error('No spreadsheet with id: ' + id);
       return ss;
+    },
+    newConditionalFormatRule() { return new MockConditionalFormatRuleBuilder(); },
+    BandingTheme: {
+      LIGHT_GREY: 'LIGHT_GREY', LIGHT_GREEN: 'LIGHT_GREEN', LIGHT_YELLOW: 'LIGHT_YELLOW',
+      LIGHT_BLUE: 'LIGHT_BLUE', LIGHT_ORANGE: 'LIGHT_ORANGE', LIGHT_CYAN: 'LIGHT_CYAN',
+      GREY: 'GREY', GREEN: 'GREEN', YELLOW: 'YELLOW', BLUE: 'BLUE', ORANGE: 'ORANGE', CYAN: 'CYAN',
     },
   };
   return {

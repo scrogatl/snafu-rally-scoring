@@ -18,11 +18,12 @@
 
 // Last edited: 2026-09-08
 /**
- * Deletes every rider score sheet AND Leader Board, leaving only the master/
- * config sheets. Leader Board is deleted along with the rider sheets - not
- * kept - since it's derived/regenerable data exactly like they are: re-running
- * setup() recreates it from scratch (fresh rows for every current rider) the
- * same way it recreates any rider sheet that's missing. Reads sheet names
+ * Deletes every rider score sheet, Leader Board, AND Master Scoring, leaving
+ * only Config/Rider Master/Bonus Master. Leader Board and Master Scoring are
+ * deleted along with the rider sheets - not kept - since both are derived/
+ * regenerable data exactly like they are: re-running setup() recreates all
+ * three from scratch (fresh rows/columns for every current rider and bonus)
+ * the same way it recreates any rider sheet that's missing. Reads sheet names
  * from Config where available (so it stays in sync with your actual sheet_*
  * settings instead of a second hardcoded copy of them), falling back to the
  * documented defaults if Config can't be loaded (e.g. it doesn't exist, or is
@@ -39,7 +40,6 @@ function deleteAllRiderSheets() {
     'Config',
     config['sheet_rider_master'] || 'Rider Master',
     config['sheet_bonus_master'] || 'Bonus Master',
-    config['sheet_master_scoring'] || 'Master Scoring',
   ];
 
   const sheets = ss.getSheets();

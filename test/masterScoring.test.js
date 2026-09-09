@@ -237,6 +237,111 @@ describe('createMasterScoring_', () => {
     assert.equal(scoring._rawCell(5, 3), "='1'!D2");
   });
 
+  test('center-aligns the entire sheet, header rows/columns included', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    assert.equal(scoring._rawAlign(1, 2), 'center', 'header label (Name)');
+    assert.equal(scoring._rawAlign(4, 1), 'center', 'header label (Bonus)');
+    assert.equal(scoring._rawAlign(3, 3), 'center', 'rider Score formula');
+    assert.equal(scoring._rawAlign(5, 3), 'center', 'bonus Approved-check cell');
+  });
+
+  test('applies row banding over the full sheet, replacing any prior banding rather than stacking it', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // Grow the sheet and re-run - must not throw "overlaps an existing
+    // banding", and must still end up with exactly one banding covering the
+    // new full extent.
+    ss.deleteSheet(ss.getSheetByName('Rider Master'));
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    assert.doesNotThrow(() => context.createMasterScoring_(ss, {}));
+
+    assert.equal(scoring.getBandings().length, 1, 'old banding must be removed, not stacked');
+    const banding = scoring.getBandings()[0];
+    assert.equal(banding.row, 1);
+    assert.equal(banding.col, 1);
+    assert.equal(banding.numRows, scoring.getLastRow());
+    assert.equal(banding.numCols, scoring.getLastColumn());
+  });
+
+  test('conditional formatting turns the data grid green on "X", scoped to row 5+/column C+ only', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    const rules = scoring.getConditionalFormatRules();
+    assert.equal(rules.length, 1);
+    assert.deepEqual(rules[0].condition, { type: 'TEXT_EQ', value: 'X' });
+    assert.equal(rules[0].background, '#b7e1cd');
+    assert.equal(rules[0].ranges.length, 1);
+    const r = rules[0].ranges[0];
+    assert.equal(r.row, 5, 'data range must start at row 5, not include the header rows');
+    assert.equal(r.col, 3, 'data range must start at column C, not include the Bonus/POINTS columns');
+  });
+
+  test('conditional formatting is rebuilt (not stacked) on re-run, growing to cover new rows/columns', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    ss.deleteSheet(ss.getSheetByName('Bonus Master'));
+    buildBonusMaster(ss, [['ABCD', '100'], ['WXYZ', '50']]);
+    context.createMasterScoring_(ss, {});
+
+    const rules = scoring.getConditionalFormatRules();
+    assert.equal(rules.length, 1, 'must not accumulate a second rule on re-run');
+    const r = rules[0].ranges[0];
+    assert.equal(r.numRows, scoring.getLastRow() - 4);
+  });
+
+  test('sets warning-only protection on the sheet at creation time', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    const protections = scoring.getProtections();
+    assert.equal(protections.length, 1);
+    assert.equal(protections[0].getWarningOnly(), true, 'must be edit-with-warning, not access-restricted');
+    assert.ok(protections[0].getDescription().length > 0, 'should explain why the sheet is protected');
+  });
+
+  test('re-running does not add a second protection on an already-protected sheet', () => {
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [['ABCD', '100']]);
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    ss.deleteSheet(ss.getSheetByName('Rider Master'));
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com'], ['2', 'Bob', 'bob@example.com']]);
+    context.createMasterScoring_(ss, {});
+
+    assert.equal(scoring.getProtections().length, 1, 'growth re-runs must not stack a second protection');
+  });
+
   test('is appended after existing sheets, not leftmost (unlike Leader Board)', () => {
     const { context } = loadApp();
     const ss = new MockSpreadsheet('ss1');

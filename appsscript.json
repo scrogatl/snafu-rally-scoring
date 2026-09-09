@@ -16,7 +16,7 @@
   "addOns": {
     "common": {
       "name": "Rally Scoring",
-      "logoUrl": "https://raw.githubusercontent.com/scrogatl/snafu-rally-scoring/altc/icons/sidebar-icon.png",
+      "logoUrl": "https://raw.githubusercontent.com/scrogatl/snafu-rally-scoring/main/icons/sidebar-icon.png",
       "useLocaleFromApp": true
     },
     "gmail": {

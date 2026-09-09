@@ -45,7 +45,7 @@ function buildAddOn(e) {
   if (!hasValidMessage) {
     return infoCard_('Not a rally submission',
       message.getSubject(),
-      'No message in this thread matches the required format: Rider Number followed by a 4-letter Bonus Code.');
+      'No message in this thread matches the required format: Rider Number followed by a Bonus Code (4 letters, or 3 letters + 1 digit).');
   }
 
   const threadLabels = thread.getLabels().map(l => l.getName());
@@ -83,7 +83,7 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
     const errSec = CardService.newCardSection().setHeader('Error');
     let errText = '';
     if (isFormatError) {
-      errText = 'Subject line does not match the required format: Rider Number followed by a 4-letter Bonus Code (e.g. "42 ABCD"). Ask the rider to resend with the correct subject.';
+      errText = 'Subject line does not match the required format: Rider Number followed by a Bonus Code - 4 letters, or 3 letters + 1 digit (e.g. "42 ABCD" or "42 ABC1"). Ask the rider to resend with the correct subject.';
     } else if (isEmailError) {
       errText = 'The sender email does not match the registered address for this rider number in Rider Master. Verify the rider\'s registered email or check for a typo.';
     } else if (isProcError) {

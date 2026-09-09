@@ -21,7 +21,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadApp, registerActiveSpreadsheet, MockSpreadsheet } = require('./support/mocks');
 
-const KEEP_SHEETS = ['Config', 'Rider Master', 'Bonus Master', 'Master Scoring'];
+const KEEP_SHEETS = ['Config', 'Rider Master', 'Bonus Master'];
 
 describe('deleteAllRiderSheets', () => {
   test('deletes rider sheets and leaves every kept sheet untouched', () => {
@@ -51,6 +51,21 @@ describe('deleteAllRiderSheets', () => {
     env.context.deleteAllRiderSheets();
 
     assert.equal(ss.getSheetByName('Leader Board'), null);
+    assert.equal(ss.getSheetByName('42'), null);
+    KEEP_SHEETS.forEach((name) => assert.ok(ss.getSheetByName(name), name + ' should still exist'));
+  });
+
+  test('deletes Master Scoring along with the rider sheets - it is not a kept sheet', () => {
+    const env = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    KEEP_SHEETS.forEach((name) => ss.addSheet(name, [['header']]));
+    ss.addSheet('Master Scoring', [['', 'Name'], ['', 'Number'], ['', 'Score'], ['Bonus', 'POINTS']]);
+    ss.addSheet('42', [['Bonus ID']]);
+    registerActiveSpreadsheet(env, ss);
+
+    env.context.deleteAllRiderSheets();
+
+    assert.equal(ss.getSheetByName('Master Scoring'), null);
     assert.equal(ss.getSheetByName('42'), null);
     KEEP_SHEETS.forEach((name) => assert.ok(ss.getSheetByName(name), name + ' should still exist'));
   });

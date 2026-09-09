@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Last edited: 2026-07-22
+// Last edited: 2026-09-08
 'use strict';
 
 const { test, describe } = require('node:test');
@@ -44,7 +44,7 @@ describe('isValidSubject', () => {
     assert.equal(context.isValidSubject('  42 ABCD  '), true);
   });
 
-  test('rejects a bonus code with digits', () => {
+  test('rejects a bonus code with a digit in the wrong position (not 3 letters + 1 trailing digit)', () => {
     assert.equal(context.isValidSubject('42 AB3D'), false);
   });
 
@@ -54,6 +54,30 @@ describe('isValidSubject', () => {
 
   test('rejects a bonus code longer than 4 letters', () => {
     assert.equal(context.isValidSubject('42 ABCDE'), false);
+  });
+
+  test('accepts 3 letters followed by exactly 1 digit', () => {
+    assert.equal(context.isValidSubject('42 ABC1'), true);
+  });
+
+  test('is case-insensitive for the 3-letters-plus-digit form', () => {
+    assert.equal(context.isValidSubject('42 abc1'), true);
+  });
+
+  test('rejects 4 letters followed by a digit', () => {
+    assert.equal(context.isValidSubject('42 ABCD1'), false);
+  });
+
+  test('rejects 3 letters followed by 2 digits', () => {
+    assert.equal(context.isValidSubject('42 ABC12'), false);
+  });
+
+  test('rejects 2 letters followed by 1 digit (too few letters)', () => {
+    assert.equal(context.isValidSubject('42 AB1'), false);
+  });
+
+  test('rejects a digit-only bonus code', () => {
+    assert.equal(context.isValidSubject('42 1234'), false);
   });
 
   test('rejects a missing rider number', () => {
@@ -84,6 +108,17 @@ describe('extractEmailData', () => {
     assert.equal(data.subject, '42 abcd');
     assert.equal(data.sender, 'Jane Smith <jane@example.com>');
     assert.deepEqual(data.date, new Date(2026, 0, 5));
+  });
+
+  test('splits rider number and upper-cases a 3-letter + 1-digit bonus code', () => {
+    const msg = {
+      getSubject: () => '7 abc1',
+      getFrom: () => 'Bob Jones <bob@example.com>',
+      getDate: () => new Date(2026, 0, 5),
+    };
+    const data = context.extractEmailData(msg);
+    assert.equal(data['rider-number'], '7');
+    assert.equal(data['bonus'], 'ABC1');
   });
 
   test('returns nulls for rider/bonus when the subject is invalid', () => {
