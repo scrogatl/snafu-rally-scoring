@@ -71,6 +71,12 @@ at any time.
 | `appsscript.json` | Manifest: OAuth scopes, add-on registration, runtime version, time zone. |
 | `LICENSE` | GNU General Public License, version 3 or later — the verbatim, unmodified license text. Every `.js`/`.gs` source file carries a short copyright/license notice referencing it. |
 
+Every `.js`/`.gs` source file's top doc-comment block (the one describing the file,
+immediately below the copyright/license notice) carries a `Last edited: YYYY-MM-DD`
+line. Any agent or contributor who edits a file's code must update that file's own
+`Last edited` line to the date of the edit — do not touch the line in a file you did
+not otherwise change.
+
 Apps Script concatenates every script file into one global scope at runtime. Any
 top-level `function` declared in `code.js` is directly callable from `Sidebar.gs` and
 vice versa (and from `utility.js`, if added) — there is no module system and no
@@ -1051,10 +1057,10 @@ Section order, exactly:
    - `isDenied`: paragraph `'Thread is denied. Use Revert below to undo.'`
    - has an error label: paragraph `'Approve/Deny unavailable while an error label is present. See Error section above.'`
    - `isUnprocessed`: paragraph `'Waiting for the next processing run to validate this submission. Approve/Deny will be available once it moves to Email Requires Review.'`
-   - otherwise (the normal "awaiting a decision" state): an **Approve this message**
+   - otherwise (the normal "awaiting a decision" state): an **Approve this bonus**
      button (filled style, background `#1A56AA`, action `handleApprove` with
      parameters `{msgId, threadId}`) — omitted if the thread is already `isApproved` —
-     followed always by a **Deny this message** button (default style, action
+     followed always by a **Deny this bonus** button (default style, action
      `showDenyConfirmation` with the same parameters).
 4. **"Revert"** section — present only if the thread is approved, denied, or scored.
    Buttons use `messages[0].getId()` as `firstMsgId` regardless of which message was
@@ -1475,7 +1481,7 @@ Master contains `ABCD` and `WXYZ`.
    the `ABCD` row (case-insensitive match), plus the email's own timestamp in the
    Submit Time column. The thread becomes `rally/email-requires-review`.
 3. A scorer opens the email. The sidebar shows one message section with an **Approve
-   this message** / **Deny this message** pair. They click Approve.
+   this bonus** / **Deny this bonus** pair. They click Approve.
 4. `handleApprove` writes `X` + the current time to the Approved column on the same
    row, adds `rally/approved` and `rally/scored`, removes
    `rally/email-requires-review`, and records `approved_msg_<threadId> = <that
@@ -1500,8 +1506,8 @@ Master contains `ABCD` and `WXYZ`.
    indistinguishable from any other submission — `handleUnprocessedThread`/
    `updateSpreadsheet` have no idea `ARSN` is a combo at all; only
    `createMasterScoring_` ever reads Combo Master.
-7. The scorer opens the email. The sidebar shows the same **Approve this message** /
-   **Deny this message** pair it would for any bonus — sidebar behavior for `ARSN` is
+7. The scorer opens the email. The sidebar shows the same **Approve this bonus** /
+   **Deny this bonus** pair it would for any bonus — sidebar behavior for `ARSN` is
    completely unaffected by Combo Master (§11). The scorer can approve it directly
    here exactly as before, independent of `ABCD`/`WXYZ`'s status, if they judge it
    warranted.

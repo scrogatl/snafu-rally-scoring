@@ -302,7 +302,7 @@ describe('buildAddOn / buildScoringCard_', () => {
     const pending = context.buildAddOn({ gmail: { messageId: msgId } });
     const messageSection = pending.sections[1]; // [0] is thread status
     const buttonTexts = messageSection._widgets.filter((w) => w._text !== undefined && w._action).map((w) => w._text);
-    assert.ok(buttonTexts.includes('Approve this message'));
+    assert.ok(buttonTexts.includes('Approve this bonus'));
     assert.equal(pending.sections.some((s) => s._header === 'Revert'), false);
 
     thread.addLabel(gmail.labelNamed('rally/approved'));

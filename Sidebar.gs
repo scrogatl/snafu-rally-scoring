@@ -18,6 +18,7 @@
 
 /**
  * Rally Scoring - Sidebar.gs
+ * Last edited: 2026-10-04
  * Gmail Add-on sidebar. Shows all messages in a thread individually,
  * with Approve / Deny buttons per message and Revert controls for the thread.
  * Reads config from the Config sheet via loadConfig() defined in code.js.
@@ -119,7 +120,7 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
       // Approve button for this message
       if (!isApproved) {
         sec.addWidget(CardService.newTextButton()
-          .setText('Approve this message')
+          .setText('Approve this bonus')
           .setOnClickAction(CardService.newAction()
             .setFunctionName('handleApprove')
             .setParameters({ msgId: msgId, threadId: threadId }))
@@ -128,7 +129,7 @@ function buildScoringCard_(messages, threadStatus, threadId, config, threadLabel
       }
       // Deny button for this message - goes to confirmation card first
       sec.addWidget(CardService.newTextButton()
-        .setText('Deny this message')
+        .setText('Deny this bonus')
         .setOnClickAction(CardService.newAction()
           .setFunctionName('showDenyConfirmation')
           .setParameters({ msgId: msgId, threadId: threadId })));

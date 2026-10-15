@@ -243,8 +243,8 @@ The Rally Scoring sidebar opens automatically when you view any submission email
 
 Each message in the thread shows its subject, sender, date, and:
 
-- **Approve this message** — writes X + timestamp to the Approved column immediately and marks the thread `rally/scored`
-- **Deny this message** — writes X + timestamp to the Denied column immediately and marks the thread `rally/denied`
+- **Approve this bonus** — writes X + timestamp to the Approved column immediately and marks the thread `rally/scored`
+- **Deny this bonus** — writes X + timestamp to the Denied column immediately and marks the thread `rally/denied`
 
 ### Revert controls
 
