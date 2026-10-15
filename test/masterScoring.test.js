@@ -63,10 +63,10 @@ describe('createMasterScoring_', () => {
     // Rider 1 -> column C, rider 2 -> column D.
     assert.equal(scoring._rawCell(1, 3), "=VLOOKUP(C2,'Rider Master'!$A$2:$B$3,2)");
     assert.equal(scoring._rawCell(2, 3), "='Rider Master'!A2");
-    assert.equal(scoring._rawCell(3, 3), '=SUMIF(C5:C,"X",$B5:$B)');
+    assert.equal(scoring._rawCell(3, 3), '=SUMIFS($B5:$B,C5:C,"X",$B5:$B,">0")*(1+MINIFS($B5:$B,C5:C,"X",$B5:$B,"<0")/100)');
     assert.equal(scoring._rawCell(1, 4), "=VLOOKUP(D2,'Rider Master'!$A$2:$B$3,2)");
     assert.equal(scoring._rawCell(2, 4), "='Rider Master'!A3");
-    assert.equal(scoring._rawCell(3, 4), '=SUMIF(D5:D,"X",$B5:$B)');
+    assert.equal(scoring._rawCell(3, 4), '=SUMIFS($B5:$B,D5:D,"X",$B5:$B,">0")*(1+MINIFS($B5:$B,D5:D,"X",$B5:$B,"<0")/100)');
 
     // Column A/B resolve the rider number (a plain cell reference).
     assert.equal(scoring.getRange(2, 3).getValue(), '1');
@@ -75,10 +75,10 @@ describe('createMasterScoring_', () => {
 
   test('regression: Score range must not include row 3 (its own cell) - a true whole-column range causes a real Sheets circular-reference error', () => {
     // A range like 'D:D' includes D3, the Score formula's own cell - Sheets
-    // flags that as circular even though the SUMIF criteria would never
-    // match D3's own content. Anchoring the range at row 5 (D5:D) keeps the
-    // "grows automatically, never needs revisiting" property of an open-ended
-    // range without including row 3.
+    // flags that as circular even though the SUMIFS/MINIFS criteria would
+    // never match D3's own content. Anchoring the range at row 5 (D5:D) keeps
+    // the "grows automatically, never needs revisiting" property of an
+    // open-ended range without including row 3.
     const { context } = loadApp();
     const ss = new MockSpreadsheet('ss1');
     buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
@@ -87,9 +87,47 @@ describe('createMasterScoring_', () => {
     context.createMasterScoring_(ss, {});
     const scoring = ss.getSheetByName('Master Scoring');
 
-    assert.match(scoring._rawCell(3, 3), /^=SUMIF\(C5:C,"X",\$B5:\$B\)$/);
+    assert.match(scoring._rawCell(3, 3), /^=SUMIFS\(\$B5:\$B,C5:C,"X",\$B5:\$B,">0"\)\*\(1\+MINIFS\(\$B5:\$B,C5:C,"X",\$B5:\$B,"<0"\)\/100\)$/);
     assert.doesNotMatch(scoring._rawCell(3, 3), /\(C:C/, 'must not be a true whole-column range');
   });
+
+  test('a negative POINTS bonus is a percentage score reduction, not additive points - and the worst one wins if more than one is approved', () => {
+    // Can't assert the Score cell's computed VALUE (the mock doesn't
+    // evaluate SUMIFS/MINIFS any more than it evaluates SUMIF/VLOOKUP/
+    // HLOOKUP/RANK elsewhere in this file) - only that the formula text
+    // itself has the shape described in createMasterScoring_'s docstring:
+    // sum positive-POINTS approved bonuses, then scale by
+    // (1 + mostNegativeApprovedPenalty/100), where MINIFS naturally picks
+    // the single worst approved penalty rather than stacking several.
+    const { context } = loadApp();
+    const ss = new MockSpreadsheet('ss1');
+    buildRiderMaster(ss, [['1', 'Jane', 'jane@example.com']]);
+    buildBonusMaster(ss, [
+      ['ABCD', '100'],
+      ['LAT1', '-25'],  // <15 min late: 25% reduction
+      ['LAT2', '-50'],  // <30 min late: 50% reduction
+      ['LAT3', '-100'], // >30 min late: 100% reduction (zeroes the score)
+    ]);
+
+    context.createMasterScoring_(ss, {});
+    const scoring = ss.getSheetByName('Master Scoring');
+
+    // The penalty rows are ordinary Bonus Master/Master Scoring rows - same
+    // Approved-check formula shape as any other bonus, nothing special about
+    // how they're wired into the rider's own column.
+    assert.equal(scoring._rawCell(6, 1), "='Bonus Master'!A3"); // LAT1
+    assert.equal(scoring._rawCell(6, 2), "='Bonus Master'!B3");
+    assert.equal(scoring._rawCell(6, 3), "='1'!D3");
+    assert.equal(scoring._rawCell(7, 1), "='Bonus Master'!A4"); // LAT2
+    assert.equal(scoring._rawCell(8, 1), "='Bonus Master'!A5"); // LAT3
+
+    // Score itself is the one formula that treats positive vs. negative
+    // POINTS differently - same text regardless of which rows happen to be
+    // penalties, since SUMIFS/MINIFS resolve that at calc time, not
+    // generation time.
+    assert.equal(scoring._rawCell(3, 3), '=SUMIFS($B5:$B,C5:C,"X",$B5:$B,">0")*(1+MINIFS($B5:$B,C5:C,"X",$B5:$B,"<0")/100)');
+  });
+
 
   test('writes the exact expected formula for each bonus row (Bonus/POINTS/Approved-check)', () => {
     const { context } = loadApp();

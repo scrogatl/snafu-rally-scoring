@@ -145,6 +145,21 @@ before an organizer has filled every value in). Example:
 | ABCD | 100 |
 | WXYZ | 50 |
 
+**A negative POINTS value means "reduce the final score by this many percent,"
+not "add this many points" — Master Scoring's Score formula (§4.3a) treats the
+sign as the switch between the two.** This is how time-based penalties (e.g. "<15
+min late" / "<30 min late" / ">30 min late") are modeled: add them as three more
+ordinary Bonus Master rows with POINTS set to `-25`, `-50`, `-100` respectively (any
+codes fitting §6's format work — `LAT1`/`LAT2`/`LAT3` is one reasonable choice). No
+other change is needed anywhere — they propagate into every rider sheet exactly like
+any bonus (§4.4), are Approved exactly like any bonus (typically by the scorer
+marking the Approved cell directly, rather than a rider emailing one in, though
+nothing stops the latter either), and Master Scoring picks up the sign automatically.
+If more than one negative-POINTS bonus is approved for the same rider at once —
+which a well-designed set of mutually-exclusive tiers like the three above shouldn't
+normally allow — the **single most severe** one applies (§4.3a's `MINIFS`), not a
+compounded stack of all of them.
+
 **Combination bonuses are just another row here, indistinguishable from a regular
 bonus, as far as Bonus Master/rider sheets are concerned.** A combo code goes in
 column A exactly like any bonus ID, gets its own row in every rider sheet (§4.4), and
@@ -175,7 +190,7 @@ creation:
 |---|---|---|---|---|---|
 | 1 | | `Name` | `=VLOOKUP(C2,'Rider Master'!$A$2:$B$<riderMasterLastRow>,2)` | … | |
 | 2 | | `Number` | `='<Rider Master>'!A<n>` | … | |
-| 3 | | `Score` | `=SUMIF(C5:C,"X",$B5:$B)` | … | |
+| 3 | | `Score` | `=SUMIFS($B5:$B,C5:C,"X",$B5:$B,">0")*(1+MINIFS($B5:$B,C5:C,"X",$B5:$B,"<0")/100)` | … | |
 | 4 | `Bonus` | `POINTS` | | | |
 | 5+ | `='<Bonus Master>'!A<n>` | `='<Bonus Master>'!B<n>` | `='<rider sheet>'!<approvedCol><row>` | … | |
 
@@ -196,18 +211,35 @@ formula itself, there's no need for that indirection, and direct references avoi
 `INDIRECT`'s volatility (recalculated on every edit, regardless of whether its inputs
 changed).
 
-**`Score` (row 3) uses ranges open-ended at the bottom but anchored at row 5
-(`C5:C`, `$B5:$B`), not a fixed far bound and not a true whole column.** The
-open-ended-at-the-bottom part is exactly the same reasoning as Leader Board's `RANK`
-(§4.5): a range bounded there too (`C5:C1003`, say) would go stale the instant more
-bonus rows are appended below it. The row-5 anchor at the *top* is not optional the
-way `RANK`'s range has no anchor at all — a true whole-column range (`C:C`) includes
-row 3, the `Score` formula's own cell, which Sheets flags as a **circular
-reference** even though the `"X"` criteria could never actually match that cell's
-own content. `$B5:$B` is anchored the same way for the same reason, even though
-column B's own row 3 is blank (not a formula) — keeping both range starts aligned is
-what SUMIF requires (matching criteria/sum range sizes), not a second circular-risk
-avoidance in its own right.
+**`Score` (row 3) sums positive-POINTS approved bonuses, then scales by the worst
+approved penalty.** It's two `SUMIFS`/`MINIFS` calls, not a plain `SUMIF`, because
+§4.3's negative-POINTS convention means a flat sum would be wrong — a penalty row's
+POINTS needs to multiply the total, not add to it:
+
+- `SUMIFS($B5:$B,C5:C,"X",$B5:$B,">0")` — every *positive*-POINTS bonus this rider
+  has Approved, summed exactly like the old plain `SUMIF` did (before any bonus ever
+  had a negative POINTS value, this *is* the plain-`SUMIF` behavior, since every row
+  matched the `">0"` filter and none matched `"<0"`).
+- `MINIFS($B5:$B,C5:C,"X",$B5:$B,"<0")` — the most negative POINTS value among this
+  rider's Approved bonuses, or `0` if none are negative (Sheets' `MINIFS`/`SUMIFS`
+  both return `0`, not an error, when nothing matches their criteria — this is what
+  makes `(1+0/100)=1`, i.e. "no change," the automatic fallback). "Most negative"
+  means **the single worst approved penalty wins**, not a sum of every approved
+  penalty — two different 50%-off penalties both marked Approved multiply by `0.5`
+  once, not `0` (stacked).
+
+Both halves use ranges open-ended at the bottom but anchored at row 5 (`C5:C`,
+`$B5:$B`), not a fixed far bound and not a true whole column. The open-ended-at-the-
+bottom part is exactly the same reasoning as Leader Board's `RANK` (§4.5): a range
+bounded there too (`C5:C1003`, say) would go stale the instant more bonus rows are
+appended below it. The row-5 anchor at the *top* is not optional the way `RANK`'s
+range has no anchor at all — a true whole-column range (`C:C`) includes row 3, the
+`Score` formula's own cell, which Sheets flags as a **circular reference** even
+though neither the `"X"` nor the `">0"`/`"<0"` criteria could ever actually match
+that cell's own content. `$B5:$B` is anchored the same way for the same reason, even
+though column B's own row 3 is blank (not a formula) — keeping both range starts
+aligned is what `SUMIFS`/`MINIFS` require (matching criteria/sum range sizes), not a
+second circular-risk avoidance in its own right.
 
 **Growth on re-run mirrors Leader Board's, in both dimensions.** A rider newly added
 to Rider Master gets a new column, appended to the right, backfilled with the
@@ -748,9 +780,11 @@ function createMasterScoring_(ss, config) {
   //    combo is skipped entirely (falls back to the plain formula in step 9/10,
   //    same as an ordinary bonus row) - never a thrown error. Result: a Map of
   //    combo row -> [member row, ...], only for combos that fully resolved.
-  // 9. New rider columns next (rows 1-3: VLOOKUP / direct Rider Master ref / SUMIF
-  //    over a range open-ended at the bottom but anchored at row 5, e.g. 'C5:C' -
-  //    not a true whole column, which would include row 3 itself and trip Sheets'
+  // 9. New rider columns next (rows 1-3: VLOOKUP / direct Rider Master ref /
+  //    SUMIFS-of-positive-POINTS-rows times a MINIFS-of-negative-POINTS-rows
+  //    penalty factor, over a range open-ended at the bottom but anchored at
+  //    row 5, e.g. 'C5:C' - not a true whole column, which would include row 3
+  //    itself and trip Sheets'
   //    circular-reference check), then - for each new column - the Approved-check
   //    formula (or the combo formula from step 8, if this row resolved as one) for
   //    EVERY bonus row that exists by now, old and new. This is why new bonus rows
@@ -1333,7 +1367,8 @@ these constraints:
 - The Sheets mock must resolve the one formula pattern the app actually writes
   (`='<Sheet Name>'!A<n>`) so that rider-sheet bonus-ID lookups exercise real,
   observable behavior rather than being special-cased in test setup. The mock does
-  **not** need to evaluate `VLOOKUP`/`HLOOKUP`/`RANK`/`SUMIF` (§4.3a/4.5/7.2a/7.2b) —
+  **not** need to evaluate `VLOOKUP`/`HLOOKUP`/`RANK`/`SUMIFS`/`MINIFS` (§4.3a/4.5/
+  7.2a/7.2b) —
   those are only ever asserted by exact formula *text*, since real Sheets formula
   evaluation is out of scope for an in-memory mock; only Leader Board's column A and
   Master Scoring's row-2 cells (both plain cell references, same pattern as above)
@@ -1360,7 +1395,15 @@ these constraints:
   defaults; and — an **explicit regression test**, since a real Sheets circular-
   reference error is easy to reintroduce without noticing (the mock has no
   circular-reference detection of its own) — that `Score`'s range is never a true
-  whole column (`C:C`), only anchored-but-open-ended (`C5:C`). Also cover the
+  whole column (`C:C`), only anchored-but-open-ended (`C5:C`). Also cover `Score`'s
+  negative-POINTS-as-percentage-penalty behavior specifically: the exact
+  `SUMIFS(...)*(1+MINIFS(...)/100)` formula text (not a plain `SUMIF`); that it's
+  identical regardless of which Bonus Master rows happen to hold a negative POINTS
+  value, since the sign is resolved by Sheets at calc time, not by
+  `createMasterScoring_` at generation time; and that a negative-POINTS bonus row is
+  otherwise just an ordinary row — same Bonus/POINTS/Approved-check formula shape,
+  same growth/backfill treatment — with nothing in `createMasterScoring_` branching
+  on its sign except the `Score` formula itself. Also cover the
   formatting pass (§4.3a): center alignment reaches header cells as well as data
   cells; row banding covers the full extent and is removed-then-reapplied (not
   stacked) on a growth re-run, an **explicit regression test** since Sheets throws
@@ -1514,7 +1557,7 @@ Master contains `ABCD` and `WXYZ`.
 8. Separately, in Master Scoring (§4.3a), rider `42`'s `ARSN` row cell is a generated
    formula — `=IF(OR(AND(<ABCD's cell>="X",<WXYZ's cell>="X"),'42'!D<n>="X"),"X","")`
    — so once *both* `ABCD` and `WXYZ` show `"X"` for rider `42` in Master Scoring, that
-   cell reads `"X"` too, and rider `42`'s `Score` (§4.3a's `SUMIF`) counts `ARSN`'s
+   cell reads `"X"` too, and rider `42`'s `Score` (§4.3a's `SUMIFS`) counts `ARSN`'s
    `POINTS` automatically — with no scorer action on `ARSN`'s own submission required.
    If the scorer directly approves `ARSN`'s own submission instead (step 7), the same
    cell reads `"X"` via that path regardless of `ABCD`/`WXYZ`. Either path (or both) is

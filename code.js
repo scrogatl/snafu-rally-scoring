@@ -18,7 +18,7 @@
 
 /**
  * Rally Scoring - code.js
- * Last edited: 2026-09-08
+ * Last edited: 2026-10-15
  * Config is read at runtime from the "Config" sheet.
  * Run setup() once after creating and populating the Config sheet.
  */
@@ -269,14 +269,28 @@ function columnToLetter_(col) {
  *
  * Each rider's own column: Name is a VLOOKUP against Rider Master; Number is
  * a direct cell reference to Rider Master (not a copied value - same idiom
- * as every other propagated value in this codebase); Score is a SUMIF over
- * an open-ended range anchored at row 5 (e.g. 'D5:D', not 'D:D') - deliberately
- * not bounded at the far end, same reasoning as Leader Board's RANK ($C:$C,
- * see createLeaderBoard_ above): a range bounded there would go stale the
- * moment more bonus rows are appended below it. It IS bounded at the near
- * end, unlike RANK's range - a true whole-column 'D:D' includes row 3 (the
- * Score formula's own cell), which Sheets flags as a circular reference even
- * though the criteria would never actually match that cell.
+ * as every other propagated value in this codebase); Score sums every
+ * APPROVED bonus with a POSITIVE POINTS value, then multiplies by a penalty
+ * factor derived from the single most severe APPROVED bonus with a NEGATIVE
+ * POINTS value (if any) - a negative POINTS value means "reduce the total
+ * score by this many percent," not "add this many points." E.g. a late-
+ * return penalty bonus with POINTS = -25 cuts the final score by 25% if
+ * approved; -100 zeroes it. Multiple negative-POINTS bonuses approved at
+ * once (which shouldn't normally happen - e.g. "<15 min late"/"<30 min
+ * late"/">30 min late" are meant to be mutually exclusive) take the WORST
+ * (most negative) one via MINIFS, not a compounded stack of all of them -
+ * two different 50%-off penalties both being checked shouldn't zero the
+ * score. Both halves use the same open-ended-at-row-5 range style ('D5:D',
+ * not 'D:D') - deliberately not bounded at the far end, same reasoning as
+ * Leader Board's RANK ($C:$C, see createLeaderBoard_ above): a range bounded
+ * there would go stale the moment more bonus rows are appended below it. It
+ * IS bounded at the near end, unlike RANK's range - a true whole-column
+ * 'D:D' includes row 3 (the Score formula's own cell), which Sheets flags as
+ * a circular reference even though the criteria would never actually match
+ * that cell. (SUMIFS/MINIFS return 0 when nothing matches their criteria -
+ * no riders with any negative-POINTS bonus approved just means the penalty
+ * factor is 1+0/100=1, i.e. no change, so this is exactly backward-compatible
+ * with every event that has never used a negative POINTS value.)
  *
  * Each bonus's own row: columns A/B are direct cell references to Bonus
  * Master (id, POINTS - defaulting to 0 with a logged warning if present but
@@ -498,7 +512,8 @@ function createMasterScoring_(ss, config) {
     ]]);
     scoring.getRange(2, nextCol, 1, 1).setFormulas([['=\'' + riderMasterName + '\'!A' + riderMasterRow]]);
     scoring.getRange(3, nextCol, 1, 1).setFormulas([[
-      '=SUMIF(' + colLetter + '5:' + colLetter + ',"X",$B5:$B)',
+      '=SUMIFS($B5:$B,' + colLetter + '5:' + colLetter + ',"X",$B5:$B,">0")' +
+      '*(1+MINIFS($B5:$B,' + colLetter + '5:' + colLetter + ',"X",$B5:$B,"<0")/100)',
     ]]);
     if (finalLastBonusRow >= 5) {
       const formulas = [];

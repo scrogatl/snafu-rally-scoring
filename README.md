@@ -94,6 +94,16 @@ A tab named **`Bonus Master`** (configurable). Column A lists every bonus ID, co
 
 Rider score sheets reference this tab with cell formulas (`='Bonus Master'!A2` etc.) so any updates to Bonus Master propagate automatically. `POINTS` is read by [Master Scoring](#master-scoring) — a blank or non-numeric value there just counts as 0, logged as a warning only when it's non-blank but not a number.
 
+**A negative `POINTS` value is a percentage penalty, not points to add** — e.g. a "<15 min late" bonus with `POINTS` set to `-25` cuts that rider's final [Master Scoring](#master-scoring) `Score` by 25% if approved, `-50` by half, `-100` to zero. Add each penalty tier as its own ordinary Bonus Master row (any code fitting the [submission format](#submission-format) works — `LAT1`/`LAT2`/`LAT3` is one option):
+
+| Bonus ID | POINTS | Meaning |
+|----------|--------|---------|
+| LAT1     | -25    | <15 min late — 25% reduction |
+| LAT2     | -50    | <30 min late — 50% reduction |
+| LAT3     | -100   | >30 min late — 100% reduction (zeroes the score) |
+
+Nothing else is needed — they propagate into rider sheets and get Approved exactly like any bonus (typically the scorer just marks the Approved cell directly, rather than the rider emailing one in, though nothing stops that either). If more than one negative-`POINTS` bonus somehow ends up Approved for the same rider, only the **single worst** one applies — not a compounded stack of all of them.
+
 **Combination bonuses go here too, exactly like any other bonus** — see [Combination bonuses](#combination-bonuses) below, and [Combo Master](#combo-master) if you want them auto-approved in Master Scoring once their component bonuses are done.
 
 ### Combo Master
@@ -117,13 +127,13 @@ A tab named **`Master Scoring`** (configurable via `sheet_master_scoring`), crea
 |---|---|---|---|---|
 | 1 | | Name | `=VLOOKUP(C2,'Rider Master'!$A$2:$B$…,2)` | … |
 | 2 | | Number | *(cell reference to Rider Master)* | … |
-| 3 | | Score | `=SUMIF(C5:C,"X",$B5:$B)` | … |
+| 3 | | Score | `=SUMIFS($B5:$B,C5:C,"X",$B5:$B,">0")*(1+MINIFS($B5:$B,C5:C,"X",$B5:$B,"<0")/100)` | … |
 | 4 | Bonus | POINTS | | |
 | 5+ | *(ref to Bonus Master)* | *(ref to Bonus Master)* | *(ref to that rider's own Approved column)* | … |
 
 Every formula is written directly by `setup()`, one per cell — not something you fill in by hand. Requires **Bonus Master** to already exist (`setup()` logs an error for this step and skips it otherwise, but still creates labels, rider sheets, and the trigger); tolerates Rider Master being missing/empty (nothing created, no error).
 
-`Score`'s range starts at row 5, not row 1 — a true whole-column range (`C:C`) would include row 3, the `Score` formula's own cell, which Sheets rejects as a circular reference even though the criteria could never actually match it.
+`Score` sums every Approved bonus with a *positive* `POINTS` value, then multiplies by `1 + (worst Approved penalty% / 100)` — see the negative-`POINTS` note in [Bonus Master](#bonus-master) above. Before any event uses a negative `POINTS` value this is identical to a plain sum (nothing to multiply by but 1). Its range starts at row 5, not row 1 — a true whole-column range (`C:C`) would include row 3, the `Score` formula's own cell, which Sheets rejects as a circular reference even though the criteria could never actually match it.
 
 **Re-running `setup()` grows this sheet** as your roster and bonus list grow: a new rider gets a new column (backfilled for every existing bonus row), a new bonus gets a new row (backfilled for every existing rider column). Existing cells are never rewritten.
 
