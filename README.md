@@ -436,6 +436,19 @@ dropdown → **Run**.
 
 Apps Script → **Executions** in the left sidebar → click any run to expand its log. The script logs every action, validation result, and error with a clear message — this includes sidebar button clicks (Approve/Deny/Revert), not just the time-driven trigger: every guard clause and failure in the sidebar's handlers writes a log line naming the function and the thread/message involved, so a scorer-facing error toast always has a matching entry here to dig into.
 
+### How to reprocess an email that is in an error state
+
+`processEmails` only picks up threads labelled `rally/unprocessed`, so an email tagged
+`rally/subject-line-error`, `rally/email-error`, or `rally/processing-error` stays there
+until you send it back through. Fix the cause first (for example, correct the rider's
+email address in Rider Master), then:
+
+1. Add the `rally/unprocessed` label to the email.
+2. Remove the error label (`rally/subject-line-error`, `rally/email-error`, or `rally/processing-error`).
+3. Either wait for the timer to run `processEmails` (every `trigger_interval_min` minutes, default 10), or trigger it by hand: in the Apps Script editor, select `processEmails` from the function dropdown → **Run**.
+
+The label names above are the defaults. If you changed any `label_*` values in the Config sheet, use your own label names instead.
+
 ---
 
 ## OAuth scopes
